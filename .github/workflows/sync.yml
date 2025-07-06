@@ -12,7 +12,7 @@ jobs:
       contents: write
     env:
       GIT_RETRIES: 3
-      SYNC_TIMEOUT: 600 # 10分钟超时
+      SYNC_TIMEOUT: 600
 
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,7 @@ jobs:
 
       - name: Atomic Sync
         run: |
-          # 定义仓库列表（JSON格式更易维护）
+          # 定义仓库列表（仅在kenzok8仓库添加dir字段）
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
@@ -42,20 +42,21 @@ jobs:
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 安装并行处理工具
+          # 安装依赖
           sudo apt-get -y install parallel jq
 
-          # 原子同步函数
+          # 修改后的原子同步函数（仅处理kenzok8的特殊情况）
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
             local dest=$(jq -r '.dest' <<< "$repo")
             local branch=$(jq -r '.branch' <<< "$repo")
+            local dir=$(jq -r '.dir // empty' <<< "$repo")
             local temp_dir=$(mktemp -d)
             
-            echo "🔁 开始同步 $dest (尝试 $GIT_RETRIES 次)"
+            echo "🔁 开始同步 $dest (分支: $branch)"
             
-            # 带重试的克隆
+            # 克隆操作保持不变
             for i in $(seq 1 $GIT_RETRIES); do
               if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
                 break
@@ -71,43 +72,47 @@ jobs:
               fi
             done
 
-            # 原子化文件操作
+            # 仅当指定dir时才处理子目录
+            if [ -n "$dir" ]; then
+              echo "🔄 提取子目录: $dir"
+              mkdir -p "$temp_dir/$dir"
+              mv "$temp_dir/$dir"/* "$temp_dir/" && \
+              rm -rf "$temp_dir/"!(."$dir") 2>/dev/null || true
+            fi
+
+            # 保持原有的原子同步逻辑
             mkdir -p "$dest"
             rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/" && \
-            echo "✅ $dest 同步成功 (分支: $branch)" || \
+            echo "✅ $dest 同步成功" || \
             { echo "❌ $dest 文件复制失败"; return 1; }
 
             rm -rf "$temp_dir"
           }
           export -f atomic_sync
 
-          # 并行同步（限制并发数）
+          # 保持原有的并行执行
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
 
+      # 以下保持你原有的commit和push步骤不变
       - name: Atomic Commit
         run: |
-          # 原子提交函数
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          # 检查有效变更
           changes=$(git status --porcelain)
           [ -z "$changes" ] && { echo "🟢 无变更需要提交"; exit 0; }
 
-          # 生成变更报告
           echo "📊 变更统计:"
           git diff --stat
           echo "📝 变更详情:"
           git status -v
 
-          # 原子提交
           git add .
           git commit -m "Atomic Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
           { echo "⚠️ 提交失败，尝试合并冲突"; exit 1; }
 
       - name: Atomic Push
         run: |
-          # 带锁的原子推送
           for i in $(seq 1 5); do
             git fetch origin main
             if git diff --quiet origin/main; then
