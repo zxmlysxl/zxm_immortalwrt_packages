@@ -45,7 +45,7 @@ jobs:
           # 安装依赖
           sudo apt-get -y install parallel jq
 
-          # 修改后的原子同步函数（仅处理kenzok8的特殊情况）
+          # 修改后的原子同步函数（兼容性写法）
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -72,20 +72,23 @@ jobs:
               fi
             done
 
-            # 仅当指定dir时才处理子目录
+            # 更安全的子目录处理（兼容所有bash版本）
             if [ -n "$dir" ]; then
               echo "🔄 提取子目录: $dir"
-              mkdir -p "$temp_dir/$dir"
-              mv "$temp_dir/$dir"/* "$temp_dir/" && \
-              rm -rf "$temp_dir/"!(."$dir") 2>/dev/null || true
+              mkdir -p "$dest"
+              if [ -d "$temp_dir/$dir" ]; then
+                rsync -a --delete --exclude='.git' "$temp_dir/$dir/" "$dest/"
+              else
+                echo "❌ 子目录 $dir 不存在于仓库中"
+                return 1
+              fi
+            else
+              # 完整仓库同步
+              mkdir -p "$dest"
+              rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/"
             fi
 
-            # 保持原有的原子同步逻辑
-            mkdir -p "$dest"
-            rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/" && \
-            echo "✅ $dest 同步成功" || \
-            { echo "❌ $dest 文件复制失败"; return 1; }
-
+            echo "✅ $dest 同步成功"
             rm -rf "$temp_dir"
           }
           export -f atomic_sync
@@ -93,7 +96,6 @@ jobs:
           # 保持原有的并行执行
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
 
-      # 以下保持你原有的commit和push步骤不变
       - name: Atomic Commit
         run: |
           git config --global user.name "GitHub Actions"
