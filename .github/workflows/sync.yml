@@ -39,6 +39,7 @@ jobs:
             {"url":"https://github.com/tty228/luci-app-wechatpush.git","dest":"wechatpush","branch":"master"},
             {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
             {"url":"https://github.com/EasyTier/luci-app-easytier.git","dest":"easytier","branch":"main"},
+            {"url":"https://github.com/nikkinikki-org/OpenWrt-nikki.git","dest":"nikki","branch":"main"},
             {"url":"https://github.com/kenzok8/small-package.git","dir":"luci-app-wolplus","dest":"wolplus","branch":"main"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
