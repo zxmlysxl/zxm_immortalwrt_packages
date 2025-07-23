@@ -104,8 +104,8 @@ jobs:
 
       - name: Atomic Commit
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "zxmlysxl"
+          git config --global user.email "zxmlysxl@gmail.com"
           
           changes=$(git status --porcelain)
           [ -z "$changes" ] && { echo "🟢 无变更需要提交"; exit 0; }
