@@ -1,4 +1,4 @@
-name: Atomic Sync Repos
+name: Atomic Sync Repos with Local Changes Preservation
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -20,7 +20,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Atomic Sync (Preserve Local Changes)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install parallel jq rsync tree
+
+      - name: Atomic Sync with Local Preservation
         run: |
           # 定义仓库列表
           REPOS='[
@@ -47,10 +52,7 @@ jobs:
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 安装依赖
-          sudo apt-get -y install parallel jq
-
-          # 改进的原子同步函数（保留本地修改）
+          # 增强版同步函数（处理所有本地变更）
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -59,9 +61,9 @@ jobs:
             local dir=$(jq -r '.dir // empty' <<< "$repo")
             local temp_dir=$(mktemp -d)
             
-            echo "🔁 开始同步 $dest (分支: $branch)"
-            
-            # 克隆操作
+            echo "🔁 开始同步 [$dest] (分支: $branch)"
+
+            # 克隆操作（含重试逻辑）
             for i in $(seq 1 $GIT_RETRIES); do
               if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
                 break
@@ -77,73 +79,98 @@ jobs:
               fi
             done
 
-            # 检测本地修改的文件（相对路径）
-            local modified_files=""
+            # 检测所有本地变更（包括重命名）
+            local exclude_patterns=()
             if [ -d "$dest" ]; then
               cd "$dest"
-              modified_files=$(git ls-files --modified --others --exclude-standard | sed 's|^\./||')
+              git status --porcelain --ignored=matching -u | while read status file; do
+                case "$status" in
+                  R*)
+                    # 处理重命名：R old -> new
+                    old_file=$(echo "$file" | awk -F' -> ' '{print $1}')
+                    new_file=$(echo "$file" | awk -F' -> ' '{print $2}')
+                    exclude_patterns+=("--exclude=${old_file}")
+                    exclude_patterns+=("--exclude=${new_file}")
+                    exclude_patterns+=("--exclude=${new_file}/*")
+                    ;;
+                  *)
+                    # 处理常规修改/未跟踪文件
+                    if [[ "$file" == *"/"* ]]; then
+                      # 如果是目录，添加目录和内容保护
+                      exclude_patterns+=("--exclude=${file%/}")
+                      exclude_patterns+=("--exclude=${file%/}/*")
+                    else
+                      exclude_patterns+=("--exclude=${file}")
+                    fi
+                    ;;
+                esac
+              done
               cd -
             fi
 
-            # 更安全的子目录处理
+            # 执行同步（显示排除模式用于调试）
+            echo "ℹ️ 排除模式: ${exclude_patterns[*]}"
+            mkdir -p "$dest"
             if [ -n "$dir" ]; then
-              echo "🔄 提取子目录: $dir"
-              mkdir -p "$dest"
+              echo "🔄 同步子目录: $dir"
               if [ -d "$temp_dir/$dir" ]; then
-                # 同步时排除已修改的文件
-                rsync -a --delete --exclude='.git' \
-                  $(printf "--exclude=%s " $modified_files) \
+                rsync -av --delete --exclude='.git' \
+                  "${exclude_patterns[@]}" \
                   "$temp_dir/$dir/" "$dest/"
               else
-                echo "❌ 子目录 $dir 不存在于仓库中"
+                echo "❌ 子目录不存在: $dir"
                 return 1
               fi
             else
-              # 完整仓库同步，排除已修改的文件
-              mkdir -p "$dest"
-              rsync -a --delete --exclude='.git' \
-                $(printf "--exclude=%s " $modified_files) \
+              rsync -av --delete --exclude='.git' \
+                "${exclude_patterns[@]}" \
                 "$temp_dir/" "$dest/"
             fi
 
-            echo "✅ $dest 同步成功（本地修改已保留）"
+            echo "✅ 同步完成 [$dest] (排除 ${#exclude_patterns[@]} 项变更)"
             rm -rf "$temp_dir"
           }
           export -f atomic_sync
 
-          # 并行执行
+          # 并行执行同步
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
+
+      - name: Verify Preserved Changes
+        run: |
+          echo "=== 保留的本地变更 ==="
+          git status --porcelain -u
+          echo "=== 目录结构变化 ==="
+          tree -d -L 2
 
       - name: Atomic Commit
         run: |
-          git config --global user.name "zxmlysxl"
-          git config --global user.email "zxmlysxl@gmail.com"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
           
-          changes=$(git status --porcelain)
-          [ -z "$changes" ] && { echo "🟢 无变更需要提交"; exit 0; }
+          if git diff-index --quiet HEAD --; then
+            echo "🟢 无变更需要提交"
+            exit 0
+          fi
 
           echo "📊 变更统计:"
           git diff --stat
-          echo "📝 变更详情:"
-          git status -v
-
           git add .
-          git commit -m "Atomic Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
-          { echo "⚠️ 提交失败，尝试合并冲突"; exit 1; }
+          git commit -m "Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
+          { echo "⚠️ 提交失败，可能存在冲突"; exit 1; }
 
       - name: Atomic Push
         run: |
           for i in $(seq 1 5); do
             git fetch origin main
             if git diff --quiet origin/main; then
-              echo "🟢 远程无新变更，直接推送"
+              echo "🟢 远程无变更，直接推送"
               git push origin HEAD:main && exit 0
             else
-              echo "🔄 检测到远程变更，正在变基..."
+              echo "🔄 检测到远程变更，尝试变基 (尝试 $i/5)..."
               git rebase origin/main && \
-              git push origin HEAD:main && exit 0 || \
+              git push origin HEAD:main --force-with-lease && exit 0 || \
               { 
-                echo "⚠️ 尝试 $i/5 失败";
+                echo "⚠️ 变基失败，重置更改...";
                 git rebase --abort;
                 git reset --hard origin/main;
                 sleep 10;
