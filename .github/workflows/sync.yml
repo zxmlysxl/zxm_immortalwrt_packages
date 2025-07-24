@@ -22,7 +22,7 @@ jobs:
 
       - name: Atomic Sync
         run: |
-          # 定义仓库列表（仅在kenzok8仓库添加dir字段）
+          # 定义仓库列表
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
@@ -44,7 +44,6 @@ jobs:
             {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
-            #{"url":"https://github.com/sbwml/packages_lang_golang.git","dest":"lang","branch":"25.x"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
