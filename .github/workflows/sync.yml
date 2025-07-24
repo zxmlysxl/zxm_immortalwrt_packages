@@ -20,9 +20,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Atomic Sync
+      - name: Atomic Sync (Preserve Local Changes)
         run: |
-          # 定义仓库列表（仅在kenzok8仓库添加dir字段）
+          # 定义仓库列表
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
@@ -44,14 +44,13 @@ jobs:
             {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
-            #{"url":"https://github.com/sbwml/packages_lang_golang.git","dest":"lang","branch":"25.x"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
           # 安装依赖
           sudo apt-get -y install parallel jq
 
-          # 修改后的原子同步函数（兼容性写法）
+          # 改进的原子同步函数（保留本地修改）
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -62,7 +61,7 @@ jobs:
             
             echo "🔁 开始同步 $dest (分支: $branch)"
             
-            # 克隆操作保持不变
+            # 克隆操作
             for i in $(seq 1 $GIT_RETRIES); do
               if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
                 break
@@ -78,28 +77,41 @@ jobs:
               fi
             done
 
-            # 更安全的子目录处理（兼容所有bash版本）
+            # 检测本地修改的文件（相对路径）
+            local modified_files=""
+            if [ -d "$dest" ]; then
+              cd "$dest"
+              modified_files=$(git ls-files --modified --others --exclude-standard | sed 's|^\./||')
+              cd -
+            fi
+
+            # 更安全的子目录处理
             if [ -n "$dir" ]; then
               echo "🔄 提取子目录: $dir"
               mkdir -p "$dest"
               if [ -d "$temp_dir/$dir" ]; then
-                rsync -a --delete --exclude='.git' "$temp_dir/$dir/" "$dest/"
+                # 同步时排除已修改的文件
+                rsync -a --delete --exclude='.git' \
+                  $(printf "--exclude=%s " $modified_files) \
+                  "$temp_dir/$dir/" "$dest/"
               else
                 echo "❌ 子目录 $dir 不存在于仓库中"
                 return 1
               fi
             else
-              # 完整仓库同步
+              # 完整仓库同步，排除已修改的文件
               mkdir -p "$dest"
-              rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/"
+              rsync -a --delete --exclude='.git' \
+                $(printf "--exclude=%s " $modified_files) \
+                "$temp_dir/" "$dest/"
             fi
 
-            echo "✅ $dest 同步成功"
+            echo "✅ $dest 同步成功（本地修改已保留）"
             rm -rf "$temp_dir"
           }
           export -f atomic_sync
 
-          # 保持原有的并行执行
+          # 并行执行
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
 
       - name: Atomic Commit
