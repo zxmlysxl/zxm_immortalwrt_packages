@@ -1,4 +1,4 @@
-name: Atomic Sync with Full Local Change Preservation
+name: Atomic Sync Repos
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -20,14 +20,9 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Dependencies
+      - name: Atomic Sync
         run: |
-          sudo apt-get update
-          sudo apt-get -y install parallel jq rsync tree
-
-      - name: Atomic Sync (Full Preservation)
-        run: |
-          # 定义仓库列表（保持您的配置）
+          # 定义仓库列表（仅在kenzok8仓库添加dir字段）
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
@@ -45,14 +40,18 @@ jobs:
             {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
             {"url":"https://github.com/EasyTier/luci-app-easytier.git","dest":"easytier","branch":"main"},
             {"url":"https://github.com/nikkinikki-org/OpenWrt-nikki.git","dest":"nikki","branch":"main"},
-            {"url":"https://github.com/animegasan/luci-app-wolplus.git","dest":"luci-app-wolplus","branch":"main"},
+            {"url":"https://github.com/oppen321/luci-app-wolplus.git","dest":"luci-app-wolplus","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
             {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
+            #{"url":"https://github.com/sbwml/packages_lang_golang.git","dest":"lang","branch":"25.x"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 终极同步函数（100%保留本地修改）
+          # 安装依赖
+          sudo apt-get -y install parallel jq
+
+          # 修改后的原子同步函数（兼容性写法）
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -61,11 +60,11 @@ jobs:
             local dir=$(jq -r '.dir // empty' <<< "$repo")
             local temp_dir=$(mktemp -d)
             
-            echo "🔁 开始同步 [$dest] (分支: $branch)"
-
-            # 克隆操作（含重试）
+            echo "🔁 开始同步 $dest (分支: $branch)"
+            
+            # 克隆操作保持不变
             for i in $(seq 1 $GIT_RETRIES); do
-              if git clone --depth 1 --branch "$branch" "$url" "$temp_dir"; then
+              if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
                 break
               elif [ $i -eq $GIT_RETRIES ]; then
                 echo "❌ 克隆失败，尝试默认分支"
@@ -79,99 +78,60 @@ jobs:
               fi
             done
 
-            # 检测所有本地变更（关键改进）
-            local exclude_patterns=()
-            if [ -d "$dest" ]; then
-              cd "$dest"
-              # 组合检测：Git跟踪的变更 + 物理文件差异
-              while IFS= read -r file; do
-                # 标准化路径（兼容子目录同步）
-                file="${file#./}"
-                if [[ -d "$file" ]]; then
-                  exclude_patterns+=("--exclude=/$file/")
-                  exclude_patterns+=("--exclude=/$file/*")
-                else
-                  exclude_patterns+=("--exclude=/$file")
-                fi
-              done < <(
-                # Git已知变更
-                git ls-files --modified --others --exclude-standard
-                # 查找Git未跟踪但实际存在的文件
-                find . -type f ! -path '*/.git/*' ! -path './.git' | 
-                  while read -r f; do 
-                    [[ ! -f "$f" ]] || git ls-files --error-unmatch "$f" &>/dev/null || echo "$f"; 
-                  done
-              )
-              cd -
-            fi
-
-            # 打印排除规则（调试）
-            echo "ℹ️ 排除规则（共 ${#exclude_patterns[@]} 条）:"
-            printf '  %s\n' "${exclude_patterns[@]}" | sort | uniq | head -n 10
-            [ ${#exclude_patterns[@]} -gt 10 ] && echo "  ...（只显示前10条）"
-
-            # 执行同步（关键：使用绝对路径排除）
-            mkdir -p "$dest"
+            # 更安全的子目录处理（兼容所有bash版本）
             if [ -n "$dir" ]; then
-              echo "🔄 同步子目录: $dir"
+              echo "🔄 提取子目录: $dir"
+              mkdir -p "$dest"
               if [ -d "$temp_dir/$dir" ]; then
-                rsync -av --delete --exclude='.git' \
-                  "${exclude_patterns[@]}" \
-                  "$temp_dir/$dir/" "$dest/"
+                rsync -a --delete --exclude='.git' "$temp_dir/$dir/" "$dest/"
               else
-                echo "❌ 子目录不存在: $dir"
+                echo "❌ 子目录 $dir 不存在于仓库中"
                 return 1
               fi
             else
-              rsync -av --delete --exclude='.git' \
-                "${exclude_patterns[@]}" \
-                "$temp_dir/" "$dest/"
+              # 完整仓库同步
+              mkdir -p "$dest"
+              rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/"
             fi
 
-            echo "✅ 同步完成 [$dest] (已保护所有本地变更)"
+            echo "✅ $dest 同步成功"
             rm -rf "$temp_dir"
           }
           export -f atomic_sync
 
-          # 并行执行同步
+          # 保持原有的并行执行
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
 
-      - name: Verify Changes
-        run: |
-          echo "=== 保留的本地变更 ==="
-          git status --porcelain -u || echo "无变更"
-          echo "=== 文件树 ==="
-          tree -L 2 || echo "未安装tree命令"
-
-      - name: Commit Changes
+      - name: Atomic Commit
         run: |
           git config --global user.name "zxmlysxl"
           git config --global user.email "zxmlysxl@gmail.com"
           
-          if git diff-index --quiet HEAD --; then
-            echo "🟢 无变更需要提交"
-            exit 0
-          fi
+          changes=$(git status --porcelain)
+          [ -z "$changes" ] && { echo "🟢 无变更需要提交"; exit 0; }
 
           echo "📊 变更统计:"
           git diff --stat
-          git add .
-          git commit -m "Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
-          { echo "⚠️ 提交失败，可能存在冲突"; exit 1; }
+          echo "📝 变更详情:"
+          git status -v
 
-      - name: Push Changes
+          git add .
+          git commit -m "Atomic Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
+          { echo "⚠️ 提交失败，尝试合并冲突"; exit 1; }
+
+      - name: Atomic Push
         run: |
           for i in $(seq 1 5); do
             git fetch origin main
             if git diff --quiet origin/main; then
-              echo "🟢 远程无变更，直接推送"
+              echo "🟢 远程无新变更，直接推送"
               git push origin HEAD:main && exit 0
             else
-              echo "🔄 检测到远程变更，尝试变基 (尝试 $i/5)..."
+              echo "🔄 检测到远程变更，正在变基..."
               git rebase origin/main && \
-              git push origin HEAD:main --force-with-lease && exit 0 || \
+              git push origin HEAD:main && exit 0 || \
               { 
-                echo "⚠️ 变基失败，重置更改...";
+                echo "⚠️ 尝试 $i/5 失败";
                 git rebase --abort;
                 git reset --hard origin/main;
                 sleep 10;
