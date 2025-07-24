@@ -1,34 +1,10 @@
-name: Atomic Sync Repos with Local Changes Preservation
-on:
-  schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+- name: Atomic Sync (Guaranteed Local Change Preservation)
+  run: |
+    # 安装必要工具
+    sudo apt-get -y install parallel jq rsync tree
 
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-    env:
-      GIT_RETRIES: 3
-      SYNC_TIMEOUT: 600
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install parallel jq rsync tree
-
-      - name: Atomic Sync with Local Preservation
-        run: |
-          # 定义仓库列表
-          REPOS='[
+    # 定义仓库列表（保持您的配置）
+    REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
             {"url":"https://github.com/sirpdboy/luci-app-kucat-config.git","dest":"kucat-config","branch":"main"},
@@ -52,130 +28,78 @@ jobs:
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 增强版同步函数（处理所有本地变更）
-          atomic_sync() {
-            local repo=$1
-            local url=$(jq -r '.url' <<< "$repo")
-            local dest=$(jq -r '.dest' <<< "$repo")
-            local branch=$(jq -r '.branch' <<< "$repo")
-            local dir=$(jq -r '.dir // empty' <<< "$repo")
-            local temp_dir=$(mktemp -d)
-            
-            echo "🔁 开始同步 [$dest] (分支: $branch)"
+    # 终极版同步函数（确保不覆盖任何本地修改）
+    atomic_sync() {
+      local repo=$1
+      local url=$(jq -r '.url' <<< "$repo")
+      local dest=$(jq -r '.dest' <<< "$repo")
+      local branch=$(jq -r '.branch' <<< "$repo")
+      local dir=$(jq -r '.dir // empty' <<< "$repo")
+      local temp_dir=$(mktemp -d)
+      
+      echo "🔁 开始同步 [$dest] (分支: $branch)"
 
-            # 克隆操作（含重试逻辑）
-            for i in $(seq 1 $GIT_RETRIES); do
-              if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
-                break
-              elif [ $i -eq $GIT_RETRIES ]; then
-                echo "❌ 克隆失败，尝试默认分支"
-                git clone --depth 1 "$url" "$temp_dir" || return 1
-                cd "$temp_dir"
-                branch=$(git rev-parse --abbrev-ref origin/HEAD | cut -d'/' -f2)
-                git checkout "$branch"
-                cd -
-              else
-                sleep $((i * 5))
-              fi
-            done
+      # 克隆上游仓库（含重试逻辑）
+      for i in $(seq 1 $GIT_RETRIES); do
+        if git clone --depth 1 --branch "$branch" "$url" "$temp_dir"; then
+          break
+        elif [ $i -eq $GIT_RETRIES ]; then
+          echo "❌ 克隆失败，尝试默认分支"
+          git clone --depth 1 "$url" "$temp_dir" || return 1
+          cd "$temp_dir"
+          branch=$(git rev-parse --abbrev-ref origin/HEAD | cut -d'/' -f2)
+          git checkout "$branch"
+          cd -
+        else
+          sleep $((i * 5))
+        fi
+      done
 
-            # 检测所有本地变更（包括重命名）
-            local exclude_patterns=()
-            if [ -d "$dest" ]; then
-              cd "$dest"
-              git status --porcelain --ignored=matching -u | while read status file; do
-                case "$status" in
-                  R*)
-                    # 处理重命名：R old -> new
-                    old_file=$(echo "$file" | awk -F' -> ' '{print $1}')
-                    new_file=$(echo "$file" | awk -F' -> ' '{print $2}')
-                    exclude_patterns+=("--exclude=${old_file}")
-                    exclude_patterns+=("--exclude=${new_file}")
-                    exclude_patterns+=("--exclude=${new_file}/*")
-                    ;;
-                  *)
-                    # 处理常规修改/未跟踪文件
-                    if [[ "$file" == *"/"* ]]; then
-                      # 如果是目录，添加目录和内容保护
-                      exclude_patterns+=("--exclude=${file%/}")
-                      exclude_patterns+=("--exclude=${file%/}/*")
-                    else
-                      exclude_patterns+=("--exclude=${file}")
-                    fi
-                    ;;
-                esac
-              done
-              cd -
-            fi
-
-            # 执行同步（显示排除模式用于调试）
-            echo "ℹ️ 排除模式: ${exclude_patterns[*]}"
-            mkdir -p "$dest"
-            if [ -n "$dir" ]; then
-              echo "🔄 同步子目录: $dir"
-              if [ -d "$temp_dir/$dir" ]; then
-                rsync -av --delete --exclude='.git' \
-                  "${exclude_patterns[@]}" \
-                  "$temp_dir/$dir/" "$dest/"
-              else
-                echo "❌ 子目录不存在: $dir"
-                return 1
-              fi
-            else
-              rsync -av --delete --exclude='.git' \
-                "${exclude_patterns[@]}" \
-                "$temp_dir/" "$dest/"
-            fi
-
-            echo "✅ 同步完成 [$dest] (排除 ${#exclude_patterns[@]} 项变更)"
-            rm -rf "$temp_dir"
-          }
-          export -f atomic_sync
-
-          # 并行执行同步
-          echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
-
-      - name: Verify Preserved Changes
-        run: |
-          echo "=== 保留的本地变更 ==="
-          git status --porcelain -u
-          echo "=== 目录结构变化 ==="
-          tree -d -L 2
-
-      - name: Atomic Commit
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          
-          if git diff-index --quiet HEAD --; then
-            echo "🟢 无变更需要提交"
-            exit 0
+      # 检测所有本地变更（关键改进点）
+      local exclude_patterns=()
+      if [ -d "$dest" ]; then
+        cd "$dest"
+        # 使用 git + find 确保捕获所有变更（包括未跟踪文件）
+        while IFS= read -r file; do
+          # 转换为相对路径（兼容子目录同步）
+          rel_path="${file#./}"
+          if [[ -d "$file" ]]; then
+            exclude_patterns+=("--exclude=/${rel_path}/")
+            exclude_patterns+=("--exclude=/${rel_path}/*")
+          else
+            exclude_patterns+=("--exclude=/${rel_path}")
           fi
+        done < <(git ls-files --modified --others --exclude-standard && \
+                 find . -type f ! -path '*/.git/*' ! -path './.git' | grep -vFx "$(git ls-files)")
+        cd -
+      fi
 
-          echo "📊 变更统计:"
-          git diff --stat
-          git add .
-          git commit -m "Sync: $(date +'%Y-%m-%d %H:%M:%S')" || \
-          { echo "⚠️ 提交失败，可能存在冲突"; exit 1; }
+      # 打印排除规则（调试用）
+      echo "ℹ️ 排除规则:"
+      printf '  %s\n' "${exclude_patterns[@]}" | sort | uniq
 
-      - name: Atomic Push
-        run: |
-          for i in $(seq 1 5); do
-            git fetch origin main
-            if git diff --quiet origin/main; then
-              echo "🟢 远程无变更，直接推送"
-              git push origin HEAD:main && exit 0
-            else
-              echo "🔄 检测到远程变更，尝试变基 (尝试 $i/5)..."
-              git rebase origin/main && \
-              git push origin HEAD:main --force-with-lease && exit 0 || \
-              { 
-                echo "⚠️ 变基失败，重置更改...";
-                git rebase --abort;
-                git reset --hard origin/main;
-                sleep 10;
-              }
-            fi
-          done
-          echo "❌ 推送失败超过最大重试次数"
-          exit 1
+      # 执行同步（关键：使用 / 开头的排除路径）
+      mkdir -p "$dest"
+      if [ -n "$dir" ]; then
+        echo "🔄 同步子目录: $dir"
+        if [ -d "$temp_dir/$dir" ]; then
+          rsync -av --delete --exclude='.git' \
+            "${exclude_patterns[@]}" \
+            "$temp_dir/$dir/" "$dest/"
+        else
+          echo "❌ 子目录不存在: $dir"
+          return 1
+        fi
+      else
+        rsync -av --delete --exclude='.git' \
+          "${exclude_patterns[@]}" \
+          "$temp_dir/" "$dest/"
+      fi
+
+      echo "✅ 同步完成 [$dest] (已保护 ${#exclude_patterns[@]} 处本地变更)"
+      rm -rf "$temp_dir"
+    }
+    export -f atomic_sync
+
+    # 并行执行同步
+    echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
