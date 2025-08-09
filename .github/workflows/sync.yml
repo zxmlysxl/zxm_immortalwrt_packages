@@ -24,7 +24,7 @@ jobs:
         run: |
           # 定义需要保护的文件列表（相对仓库根目录的路径,目录需以/结尾）
           PROTECTED_FILES=(
-            "openwrt-passwall-packages/tcping/makefile"
+            "openwrt-passwall-packages/tcping/Makefile"
           )
 
           # 标记保护文件（跳过Git更新）
