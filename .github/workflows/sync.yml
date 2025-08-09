@@ -31,7 +31,6 @@ jobs:
             {"url":"https://github.com/sirpdboy/luci-app-chatgpt-web.git","dest":"luci-app-chatgpt-web","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-netwizard.git","dir":"luci-app-netwizard","dest":"luci-app-netwizard","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
-            {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"js"},
             {"url":"https://github.com/sirpdboy/luci-app-netdata.git","dest":"luci-app-netdata","branch":"master"},
             {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-nft-timecontrol","dest":"luci-app-nft-timecontrol","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-eqosplus.git","dest":"luci-app-eqosplus","branch":"main"},
