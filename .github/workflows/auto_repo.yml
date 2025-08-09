@@ -1,4 +1,4 @@
-name: Auto Repo
+name: Z-autorepo
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -19,44 +19,56 @@ jobs:
 
       - name: Setup Smart Sync
         run: |
-    # 确保在仓库根目录
-    cd "$GITHUB_WORKSPACE" || exit 1
+          # 确保在仓库根目录
+          cd "$GITHUB_WORKSPACE" || exit 1
 
-    # 验证Git状态
-    git status || { echo "❌ Git仓库初始化失败"; exit 1; }
+          # 验证Git状态
+          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "❌ 错误：当前不在Git仓库中"
+            exit 1
+          fi
 
-    # 安装依赖（添加重试机制）
-    for i in {1..3}; do
-      sudo apt-get -y install parallel jq rsync && break
-      sleep 5
-      [ $i -eq 3 ] && exit 1
-    done
+          # 安装依赖（带重试机制）
+          echo "🔧 安装依赖..."
+          for i in {1..3}; do
+            sudo apt-get -y install parallel jq rsync && break
+            sleep 5
+            if [ $i -eq 3 ]; then
+              echo "❌ 依赖安装失败"
+              exit 1
+            fi
+          done
 
-    # 安全创建.syncignore
-    touch .syncignore
+          # 初始化.syncignore
+          touch .syncignore
 
-    # 空白名单配置
-    WHITELIST=()
+          # 设置空白名单
+          WHITELIST=()
 
-    # 检测修改文件（添加错误处理）
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-      echo "🔍 检测本地修改文件..."
-      git ls-files -m > .local_changes || echo "⚠️ 无本地修改文件"
-      touch .local_changes  # 确保文件存在
-    else
-      echo "❌ 当前不在Git工作树中"
-      exit 1
-    fi
+          # 检测本地修改文件
+          echo "🔍 检测本地修改文件..."
+          git ls-files -m > .local_changes || {
+            echo "⚠️ 没有检测到本地修改文件"
+            touch .local_changes
+          }
 
-    # 合并排除规则（空文件时自动跳过）
-    cat .syncignore .local_changes 2>/dev/null | sort -u > .tmp_ignore
-    mv .tmp_ignore .syncignore
+          # 合并排除规则
+          echo "🔄 生成保护列表..."
+          cat .syncignore .local_changes 2>/dev/null | sort -u > .tmp_ignore
+          mv .tmp_ignore .syncignore
 
-    echo "🛡️ 受保护文件列表："
-    [ -s .syncignore ] && cat .syncignore || echo "   （无保护文件）"
+          # 显示保护列表
+          echo "🛡️ 当前受保护文件："
+          if [ -s .syncignore ]; then
+            cat .syncignore | sed 's/^/  - /'
+          else
+            echo "  （无保护文件）"
+          fi
 
       - name: Run Smart Sync
         run: |
+          cd "$GITHUB_WORKSPACE" || exit 1
+
           # 智能同步函数
           smart_sync() {
             local repo=$1
@@ -65,11 +77,15 @@ jobs:
             local branch=$(jq -r '.branch' <<< "$repo")
             local dir=$(jq -r '.dir // empty' <<< "$repo")
             
-            echo "🔁 同步 [$dest] (分支: $branch)"
+            echo "🔁 正在同步 [$dest] (分支: $branch)"
             
             # 克隆仓库
             temp_dir=$(mktemp -d)
-            git clone --depth 1 --branch "$branch" "$url" "$temp_dir" || return 1
+            if ! git clone --depth 1 --branch "$branch" "$url" "$temp_dir"; then
+              echo "❌ 克隆失败: $dest"
+              rm -rf "$temp_dir"
+              return 1
+            fi
 
             # 构建rsync排除参数
             exclude_args=()
@@ -77,11 +93,12 @@ jobs:
               [ -n "$pattern" ] && exclude_args+=(--exclude="$pattern")
             done < .syncignore
 
-            # 执行同步（保留白名单目录）
+            # 执行同步
+            mkdir -p "$dest"
             if [ -n "$dir" ]; then
-              rsync -a --delete "${exclude_args[@]}" "$temp_dir/$dir/" "$dest/"
+              rsync -av --delete "${exclude_args[@]}" "$temp_dir/$dir/" "$dest/"
             else
-              rsync -a --delete "${exclude_args[@]}" "$temp_dir/" "$dest/"
+              rsync -av --delete "${exclude_args[@]}" "$temp_dir/" "$dest/"
             fi
 
             rm -rf "$temp_dir"
@@ -119,18 +136,21 @@ jobs:
           ]'
 
           # 执行同步
-          echo "$REPOS" | jq -c '.[]' | parallel -j 4 smart_sync
+          echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 smart_sync
 
       - name: Commit Changes
         run: |
+          cd "$GITHUB_WORKSPACE" || exit 1
+          
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
           # 只提交.syncignore的变更
           git add .syncignore
-          if git diff --cached --quiet; then
-            echo "🟢 无变更需要提交"
-          else
-            git commit -m "chore: update protected files list"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update protected files list [skip ci]"
             git push
+            echo "🔔 已提交保护列表更新"
+          else
+            echo "🟢 无保护列表变更需要提交"
           fi
