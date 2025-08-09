@@ -20,8 +20,24 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Atomic Sync
+      - name: Atomic Sync (Protected Files)
         run: |
+          # 定义需要保护的文件列表（相对仓库根目录的路径,目录需以/结尾）
+          PROTECTED_FILES=(
+            "openwrt-passwall-packages/tcping/makefile"
+          )
+
+          # 标记保护文件（跳过Git更新）
+          echo "🔒 正在保护本地修改的文件..."
+          for file in "${PROTECTED_FILES[@]}"; do
+            if [ -e "$file" ]; then
+              git update-index --skip-worktree "$file"
+              echo "  - 已保护: $file"
+            else
+              echo "  - 文件不存在（跳过）: $file"
+            fi
+          done
+
           # 定义仓库列表
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
@@ -54,7 +70,7 @@ jobs:
           # 安装依赖
           sudo apt-get -y install parallel jq
 
-          # 修改后的原子同步函数（兼容性写法）
+          # 原子同步函数
           atomic_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -65,7 +81,7 @@ jobs:
             
             echo "🔁 开始同步 $dest (分支: $branch)"
             
-            # 克隆操作保持不变
+            # 克隆操作
             for i in $(seq 1 $GIT_RETRIES); do
               if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
                 break
@@ -81,7 +97,7 @@ jobs:
               fi
             done
 
-            # 更安全的子目录处理（兼容所有bash版本）
+            # 同步
             if [ -n "$dir" ]; then
               echo "🔄 提取子目录: $dir"
               mkdir -p "$dest"
@@ -92,7 +108,6 @@ jobs:
                 return 1
               fi
             else
-              # 完整仓库同步
               mkdir -p "$dest"
               rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/"
             fi
@@ -102,8 +117,16 @@ jobs:
           }
           export -f atomic_sync
 
-          # 保持原有的并行执行
+          # 执行同步
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 atomic_sync
+
+          # 解除文件保护（保持本地修改）
+          echo "🔓 恢复文件跟踪状态..."
+          for file in "${PROTECTED_FILES[@]}"; do
+            if [ -e "$file" ]; then
+              git update-index --no-skip-worktree "$file"
+            fi
+          done
 
       - name: Atomic Commit
         run: |
@@ -115,7 +138,6 @@ jobs:
 
           echo "📊 变更统计:"
           git diff --stat
-          echo "📝 变更详情:"
           git status -v
 
           git add .
