@@ -1,0 +1,194 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "OTA"
+msgstr "在线升级"
+
+msgid "Already the latest firmware"
+msgstr "已经是最新固件"
+
+msgid "Check update"
+msgstr "检查更新"
+
+msgid "Found new firmware"
+msgstr "发现新固件"
+
+msgid "Download firmware"
+msgstr "下载固件"
+
+msgid "Cancel download"
+msgstr "取消下载"
+
+msgid "Firmware downloaded"
+msgstr "固件已下载"
+
+msgid "Flash image..."
+msgstr "刷写固件..."
+
+msgid "Flash image"
+msgstr "刷写固件"
+
+msgid "Checking..."
+msgstr "检查中..."
+
+msgid "Check failed"
+msgstr "检查失败"
+
+msgid "Downloading"
+msgstr "下载中"
+
+msgid "Download canceled"
+msgstr "下载已取消"
+
+msgid "Download failed"
+msgstr "下载失败"
+
+msgid "Upgrade firmware On the Air"
+msgstr "在线升级固件"
+
+msgid "Keep settings configuration"
+msgstr "保留配置"
+
+msgid "Keep installed plugins(test)"
+msgstr "保留插件(测试)"
+
+msgid "Online firmware update instructions: Before expanding and upgrading, use the [Expand Partition]to expand the mnt partition; The remaining space is more than twice that of the firmware expansion; Expansion firmware DD does not retain configuration flashing; Not expanding to the default flashing mode of the system can retain configuration upgrades"
+msgstr "在线更新固件说明：扩容升级前先用【扩容分区】扩容mnt分区;剩余空间是扩容固件的2倍以上;扩容固件刷机不保留配置刷机;不扩容为系统默认刷机模式可保留配置升级"
+
+msgid "The latest firmware"
+msgstr "最新固件"
+
+msgid "The image file does not contain a supported format. try again later."
+msgstr "镜像文件格式不支持或损坏。稍候再试"
+
+msgid "History Log"
+msgstr "历史更新日志"
+
+msgid "Found downloading firmware, will show progress"
+msgstr "发现下载中的固件，将显示当前进度"
+
+msgid "Select expansion mode"
+msgstr "选择扩容模式"
+
+msgid "Not expanding to the default flashing mode of the system can retain the configuration, while expanding firmware DD does not retain the configuration for flashing"
+msgstr "不扩容为系统默认刷机模式可保留配置，扩容固件DD不保留配置刷机"
+
+msgid "No expansion"
+msgstr "不扩容"
+
+msgid "Expand by 1G"
+msgstr "扩容1G"
+
+msgid "Expand by 2G"
+msgstr "扩容2G"
+
+msgid "Expand by 5G"
+msgstr "扩容5G"
+
+msgid "Expand by 10G"
+msgstr "扩容10G"
+
+msgid "Expand by 20G"
+msgstr "扩容20G"
+
+msgid "The system is flashing now.<br />DO NOT POWER OFF THE DEVICE!"
+msgstr "系统现在正在升级。<br/>请勿关闭设备电源！"
+
+# msgid "Device will reboot shortly. You may need to renew your IP address."
+# msgstr "设备将很快重新启动。您可能需要重输固件IP地址。"
+
+msgid "Don't worry, prepare first"
+msgstr "别急，先准备一下"
+
+# msgid "Flashing progress:"
+# msgstr "升级进度："
+
+# msgid "Flashing:"
+# msgstr "写入数："
+
+msgid "Flashing in progress"
+msgstr "正在升级"
+
+msgid "Firmware Upgrade"
+msgstr "固件升级"
+
+msgid "Starting flash process"
+msgstr "开始刷机进度"
+
+msgid "Starting flash firmware"
+msgstr "开始刷机"
+
+msgid "Preparing flash process"
+msgstr "正在刷新系统"
+
+msgid "Flash failed! Check log for details"
+msgstr "升级失败了！查看日志以了解详细信息"
+
+msgid "Could not reconnect automatically. Please try to access:"
+msgstr "无法自动重新连接。请尝试访问："
+
+msgid "Preparing extracted image"
+msgstr "提取固件镜像"
+
+msgid "Error: Extracted image verification failed"
+msgstr "错误：提取的固件镜像验证失败"
+
+msgid "Operation timed out! Please check device connection manually."
+msgstr "操作超时！请手动检查设备连接"
+
+msgid "Device will reboot shortly. Trying to reconnect"
+msgstr "设备将很快重新启动。正在尝试重新连接"
+
+msgid "manually."
+msgstr "手动。"
+
+msgid "error: Could not determine expansion path or device"
+msgstr "错误：无法确定扩展路径或设备"
+
+msgid "Expanding partition"
+msgstr "扩展固件分区"
+
+msgid "Could not reconnect automatically. Please try to access one of these addresses manually:"
+msgstr "不能自动连接，请手动输入访问地址："
+
+msgid "Flashing completed, syncing"
+msgstr "刷机完成，刷新中"
+
+msgid "Rebooting system"
+msgstr "重启系统"
+
+msgid "Running sysupgrade command"
+msgstr "运行upgrade系统升级"
+
+msgid "Writing image to flash"
+msgstr "写入固件"
+
+msgid "Extracted image verification"
+msgstr "校验扩容的固件"
+
+msgid "Flash complete! Rebooting"
+msgstr "刷写完成，重启设备"
+
+msgid "Flash complete!"
+msgstr "刷写完成"
+
+msgid "Flash failed: "
+msgstr "写入失败:"
+
+msgid "Preparing upgrade environment"
+msgstr "修复更新环境"
+
+msgid "Verify firmware files"
+msgstr "校验固件完整性"
+
+msgid "Fix GPT expansion partition"
+msgstr "修复扩展分区"
+
+msgid "Saving configuration files"
+msgstr "存储配置信息"
+
+msgid "Creating ramdisk"
+msgstr "建立虚拟盘"
+
+msgid "Switching to ramdisk mode"
+msgstr "切换到虚拟盘模式"
