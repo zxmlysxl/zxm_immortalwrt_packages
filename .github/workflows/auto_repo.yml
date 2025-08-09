@@ -1,0 +1,123 @@
+name: Auto Repo
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Smart Sync
+        run: |
+          # 安装依赖
+          sudo apt-get -y install parallel jq rsync
+
+          # 初始化.syncignore（如果不存在）
+          [ -f .syncignore ] || touch .syncignore
+
+          # 白名单目录（这些目录总是强制同步）
+          WHITELIST=()
+
+          # 生成保护文件列表（自动检测本地修改）
+          echo "🔍 检测本地修改文件..."
+          git ls-files -m | grep -vE "$(IFS='|'; echo "${WHITELIST[*]}")" > .local_changes
+
+          # 合并已有排除规则
+          cat .syncignore .local_changes | sort -u > .tmp_ignore
+          mv .tmp_ignore .syncignore
+
+          # 显示即将保护的文件
+          echo "🛡️ 受保护文件列表："
+          cat .syncignore | while read -r line; do
+            [ -n "$line" ] && echo "  - $line"
+          done
+
+      - name: Run Smart Sync
+        run: |
+          # 智能同步函数
+          smart_sync() {
+            local repo=$1
+            local url=$(jq -r '.url' <<< "$repo")
+            local dest=$(jq -r '.dest' <<< "$repo")
+            local branch=$(jq -r '.branch' <<< "$repo")
+            local dir=$(jq -r '.dir // empty' <<< "$repo")
+            
+            echo "🔁 同步 [$dest] (分支: $branch)"
+            
+            # 克隆仓库
+            temp_dir=$(mktemp -d)
+            git clone --depth 1 --branch "$branch" "$url" "$temp_dir" || return 1
+
+            # 构建rsync排除参数
+            exclude_args=()
+            while read -r pattern; do
+              [ -n "$pattern" ] && exclude_args+=(--exclude="$pattern")
+            done < .syncignore
+
+            # 执行同步（保留白名单目录）
+            if [ -n "$dir" ]; then
+              rsync -a --delete "${exclude_args[@]}" "$temp_dir/$dir/" "$dest/"
+            else
+              rsync -a --delete "${exclude_args[@]}" "$temp_dir/" "$dest/"
+            fi
+
+            rm -rf "$temp_dir"
+            echo "✅ 完成 [$dest]"
+          }
+          export -f smart_sync
+
+          # 仓库配置
+          REPOS='[
+            {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
+            {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
+            {"url":"https://github.com/sirpdboy/luci-app-kucat-config.git","dest":"kucat-config","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-chatgpt-web.git","dest":"luci-app-chatgpt-web","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-netwizard.git","dir":"luci-app-netwizard","dest":"luci-app-netwizard","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
+            {"url":"https://github.com/sirpdboy/luci-app-netdata.git","dest":"luci-app-netdata","branch":"master"},
+            {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-nft-timecontrol","dest":"luci-app-nft-timecontrol","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-eqosplus.git","dest":"luci-app-eqosplus","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-watchdog.git","dest":"watchdog","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-taskplan.git","dir":"luci-app-taskplan","dest":"luci-app-taskplan","branch":"master"},
+            {"url":"https://github.com/sirpdboy/luci-app-poweroffdevice.git","dir":"luci-app-poweroffdevice","dest":"luci-app-poweroffdevice","branch":"js"},
+            {"url":"https://github.com/tty228/luci-app-wechatpush.git","dest":"luci-app-wechatpush","branch":"master"},
+            {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
+            {"url":"https://github.com/EasyTier/luci-app-easytier.git","dest":"easytier","branch":"main"},
+            {"url":"https://github.com/asvow/luci-app-tailscale.git","dest":"luci-app-tailscale","branch":"main"},
+            {"url":"https://github.com/nikkinikki-org/OpenWrt-nikki.git","dest":"nikki","branch":"main"},
+            {"url":"https://github.com/oppen321/luci-app-wolplus.git","dest":"luci-app-wolplus","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
+            {"url":"https://github.com/asvow/luci-app-tailscale.git","dest":"luci-app-tailscale","branch":"main"},
+            {"url":"https://github.com/sos801107/luci-app-ota.git","dest":"luci-app-ota","branch":"main"},
+            {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
+          ]'
+
+          # 执行同步
+          echo "$REPOS" | jq -c '.[]' | parallel -j 4 smart_sync
+
+      - name: Commit Changes
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # 只提交.syncignore的变更
+          git add .syncignore
+          if git diff --cached --quiet; then
+            echo "🟢 无变更需要提交"
+          else
+            git commit -m "chore: update protected files list"
+            git push
+          fi
