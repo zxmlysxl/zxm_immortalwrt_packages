@@ -23,13 +23,13 @@ jobs:
       - name: Atomic Sync (Protected Files)
         run: |
           # 定义需要保护的文件列表（相对仓库根目录的路径,目录需以/结尾）
-          PROTECTED_FILES=(
-            "openwrt-passwall-packages/tcping/Makefile"
+          RSYNC_EXCLUDES=(
+            "--exclude=openwrt-passwall-packages/tcping/Makefile"
           )
 
           # 标记保护文件（跳过Git更新）
           echo "🔒 正在保护本地修改的文件..."
-          for file in "${PROTECTED_FILES[@]}"; do
+          for file in "${RSYNC_EXCLUDES[@]}"; do
             if [ -e "$file" ]; then
               git update-index --skip-worktree "$file"
               echo "  - 已保护: $file"
@@ -99,17 +99,9 @@ jobs:
 
             # 同步
             if [ -n "$dir" ]; then
-              echo "🔄 提取子目录: $dir"
-              mkdir -p "$dest"
-              if [ -d "$temp_dir/$dir" ]; then
-                rsync -a --delete --exclude='.git' "$temp_dir/$dir/" "$dest/"
-              else
-                echo "❌ 子目录 $dir 不存在于仓库中"
-                return 1
-              fi
+              rsync -a --delete "${RSYNC_EXCLUDES[@]}" --exclude='.git' "$temp_dir/$dir/" "$dest/"
             else
-              mkdir -p "$dest"
-              rsync -a --delete --exclude='.git' "$temp_dir/" "$dest/"
+              rsync -a --delete "${RSYNC_EXCLUDES[@]}" --exclude='.git' "$temp_dir/" "$dest/"
             fi
 
             echo "✅ $dest 同步成功"
