@@ -9,24 +9,24 @@ TMPID="/var/$NAME.tmpid"
 idlist=$(uci show $NAME | grep "enable='1'" | grep "device" | grep -oE '\[.*?\]' | grep -o '[0-9]')
 
 config_get_type() {
-	local ret=$(uci -q get "${NAME}.${1}")
+	local ret=$(uci -q get "${NAME}.${1}" 2>/dev/null)
 	echo "${ret:=$2}"
 }
 
 config_n_get() {
-	local ret=$(uci -q get "${NAME}.${1}.${2}")
+	local ret=$(uci -q get "${NAME}.${1}.${2}" 2>/dev/null)
 	echo "${ret:=$3}"
 }
 
 config_t_get() {
-	local index=${3:-0}
-	local ret=$(uci -q get "${NAME}.@${1}[${index}].${2}")
-	echo "${ret:=${4}}"
+	local index=${4:-0}
+	local ret=$(uci -q get "${NAME}.@${1}[${index}].${2}" 2>/dev/null)
+	echo "${ret:=${3}}"
 }
 
 config_t_set() {
 	local index=${4:-0}
-	local ret=$(uci -q set "${NAME}.@${1}[${index}].${2}=${3}")
+	local ret=$(uci -q set "${NAME}.@${1}[${index}].${2}=${3}" 2>/dev/null)
 }
 
 is_time_in_range() {
@@ -57,10 +57,10 @@ is_weekday_in_range() {
 }
 
 check_device() {
-    local id=$1
-    local start_time=$(config_t_get device timestart $id )
-    local end_time=$(config_t_get device timeend $id )
-    local weekdays=$(config_t_get device week $id )
+    local device_id=$1
+    local start_time=$(config_t_get device timestart 0 $device_id )
+    local end_time=$(config_t_get device timeend 0 $device_id )
+    local weekdays=$(config_t_get device week 0 $device_id )
 
     if is_weekday_in_range "$weekdays" && is_time_in_range "$start_time" "$end_time"; then
         return 0  
@@ -70,29 +70,29 @@ check_device() {
 }
 
 update_device_status() {
-    local id=$1
+    local device_id=$1
     local action=$2
 
     if [ "$action" = "add" ]; then
-        timecontrol add $id
-        echo "!${id}!" >> $IDLIST
+        timecontrol add $device_id
+        echo "!${device_id}!" >> $IDLIST
     elif [ "$action" = "del" ]; then
-        timecontrol del $id
-        sed -i "/!$id!/d" $IDLIST >/dev/null 2>&1
+        timecontrol del $device_id
+        sed -i "/!$device_id!/d" $IDLIST >/dev/null 2>&1
     fi
 }
 
 process_devices() {
     [ -s $IDLIST ] || touch $IDLIST
 
-    for id in $idlist; do
-        if check_device $id; then
-            if ! grep -q "!${id}!" $IDLIST; then
-                update_device_status $id "add"
+    for device_id in $idlist; do
+        if check_device $device_id; then
+            if ! grep -q "!${device_id}!" $IDLIST; then
+                update_device_status $device_id "add"
             fi
         else
-            if grep -q "!${id}!" $IDLIST; then
-                update_device_status $id "del"
+            if grep -q "!${device_id}!" $IDLIST; then
+                update_device_status $device_id "del"
             fi
         fi
     done
