@@ -1,37 +1,38 @@
 name: Z-autorepo
 on:
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # 每天 UTC 时间 0 点自动运行
+  workflow_dispatch:     # 允许手动触发
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: write  # 必须具有写入权限才能推送变更
 
     steps:
+      # 步骤1：检出当前仓库（必须使用 token 才能后续推送）
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # 获取完整 Git 历史
+          token: ${{ secrets.GITHUB_TOKEN }}  # 使用 GitHub 自动生成的 token
 
+      # 步骤2：设置智能同步环境
       - name: Setup Smart Sync
         run: |
-          # 确保在仓库根目录
           cd "$GITHUB_WORKSPACE" || exit 1
 
-          # 验证Git状态
+          # 验证 Git 状态
           if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "❌ 错误：当前不在Git仓库中"
+            echo "❌ 错误：当前不在 Git 仓库中"
             exit 1
           fi
 
-          # 安装依赖（带重试机制）
+          # 安装必要工具（带重试机制）
           echo "🔧 安装依赖..."
           for i in {1..3}; do
-            sudo apt-get -y install parallel jq rsync && break
+            sudo apt-get update && sudo apt-get install -y parallel jq rsync && break
             sleep 5
             if [ $i -eq 3 ]; then
               echo "❌ 依赖安装失败"
@@ -39,25 +40,21 @@ jobs:
             fi
           done
 
-          # 初始化.syncignore
+          # 初始化 .syncignore 文件
           touch .syncignore
 
-          # 设置空白名单
-          WHITELIST=()
-
-          # 检测本地修改文件
+          # 检测本地修改的文件（避免覆盖）
           echo "🔍 检测本地修改文件..."
           git ls-files -m > .local_changes || {
             echo "⚠️ 没有检测到本地修改文件"
             touch .local_changes
           }
 
-          # 合并排除规则
-          echo "🔄 生成保护列表..."
+          # 合并排除规则到 .syncignore
           cat .syncignore .local_changes 2>/dev/null | sort -u > .tmp_ignore
           mv .tmp_ignore .syncignore
 
-          # 显示保护列表
+          # 显示受保护文件列表
           echo "🛡️ 当前受保护文件："
           if [ -s .syncignore ]; then
             cat .syncignore | sed 's/^/  - /'
@@ -65,11 +62,12 @@ jobs:
             echo "  （无保护文件）"
           fi
 
+      # 步骤3：执行智能同步
       - name: Run Smart Sync
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
 
-          # 智能同步函数
+          # 定义智能同步函数
           smart_sync() {
             local repo=$1
             local url=$(jq -r '.url' <<< "$repo")
@@ -79,7 +77,7 @@ jobs:
             
             echo "🔁 正在同步 [$dest] (分支: $branch)"
             
-            # 克隆仓库
+            # 克隆源仓库到临时目录
             temp_dir=$(mktemp -d)
             if ! git clone --depth 1 --branch "$branch" "$url" "$temp_dir"; then
               echo "❌ 克隆失败: $dest"
@@ -87,13 +85,13 @@ jobs:
               return 1
             fi
 
-            # 构建rsync排除参数
+            # 构建 rsync 排除参数（从 .syncignore 读取）
             exclude_args=()
             while read -r pattern; do
               [ -n "$pattern" ] && exclude_args+=(--exclude="$pattern")
             done < .syncignore
 
-            # 执行同步
+            # 执行同步（保留目标目录结构）
             mkdir -p "$dest"
             if [ -n "$dir" ]; then
               rsync -av --delete "${exclude_args[@]}" "$temp_dir/$dir/" "$dest/"
@@ -106,7 +104,7 @@ jobs:
           }
           export -f smart_sync
 
-          # 仓库配置
+          # 仓库配置列表（JSON 格式）
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
@@ -135,22 +133,27 @@ jobs:
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 执行同步
+          # 使用 parallel 并行同步（最多 4 个并发）
           echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 smart_sync
 
+          # 同步完成后，标记所有文件为 Git 可跟踪
+          git add .
+
+      # 步骤4：提交变更到仓库
       - name: Commit Changes
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
           
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          # 配置 Git 用户信息
+          git config --global user.name "zxmlysxl"
+          git config --global user.email "zxmlysxl@gmail.com"
           
-          # 只提交.syncignore的变更
-          git add .syncignore
+          # 提交所有变更（包括同步的文件）
+          git add .
           if ! git diff --cached --quiet; then
-            git commit -m "chore: update protected files list [skip ci]"
+            git commit -m "chore: sync repositories [skip ci]"
             git push
-            echo "🔔 已提交保护列表更新"
+            echo "✅ 已提交所有变更"
           else
-            echo "🟢 无保护列表变更需要提交"
+            echo "🟢 无变更需要提交"
           fi
