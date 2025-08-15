@@ -130,6 +130,7 @@ jobs:
             {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
             {"url":"https://github.com/asvow/luci-app-tailscale.git","dest":"luci-app-tailscale","branch":"main"},
             {"url":"https://github.com/sos801107/luci-app-ota.git","dest":"luci-app-ota","branch":"main"},
+            {"url":"https://github.com/brvphoenix/luci-app-wrtbwmon.git","dir":"luci-app-wrtbwmon","dest":"luci-app-wrtbwmon","branch":"master"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
