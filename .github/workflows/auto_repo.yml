@@ -138,6 +138,7 @@ jobs:
           # 设置输出变量
           echo "healthy_count=$healthy_count" >> $GITHUB_OUTPUT
           echo "problematic_count=$problematic_count" >> $GITHUB_OUTPUT
+          echo "total_count=$total_count" >> $GITHUB_OUTPUT
 
       # 步骤4：执行智能同步
       - name: Run Smart Sync
@@ -239,8 +240,7 @@ jobs:
 
           # 生成最终报告
           echo "📋 同步总结:"
-          echo "   成功同步: $(find . -name "*.lua" -o -name "*.js" -o -name "*.md" 2>/dev/null | grep -v ".git" | wc -l) 个文件"
-          echo "   跳过仓库: ${{ steps.health-check.outputs.problematic_count }}"
+          echo "   成功同步: $(find . -maxdepth 2 -type f -name "*.lua" -o -name "*.js" -o -name "*.md" 2>/dev/null | grep -v ".git" | wc -l) 个文件"
 
       # 步骤5：提交变更
       - name: Commit and Push Changes
@@ -275,20 +275,25 @@ jobs:
             echo "🟢 无变更需要提交"
           fi
 
-      # 步骤6：生成同步报告（可选）
+      # 步骤6：生成同步报告
       - name: Generate Sync Report
         if: always()
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
+          
+          # 读取统计信息
+          HEALTHY_COUNT=$(cat healthy_repos.jsonl 2>/dev/null | wc -l || echo 0)
+          PROBLEMATIC_COUNT=$(cat problematic_repos.jsonl 2>/dev/null | wc -l || echo 0)
+          TOTAL_COUNT=$((HEALTHY_COUNT + PROBLEMATIC_COUNT))
           
           echo "## 🔄 自动同步报告" > sync_report.md
           echo "" >> sync_report.md
           echo "**同步时间:** $(date)" >> sync_report.md
           echo "" >> sync_report.md
           echo "### 📊 统计信息" >> sync_report.md
-          echo "- 总仓库数: ${{ steps.health-check.outputs.healthy_count + steps.health-check.outputs.problematic_count }}" >> sync_report.md
-          echo "- 成功同步: ${{ steps.health-check.outputs.healthy_count }}" >> sync_report.md
-          echo "- 跳过仓库: ${{ steps.health-check.outputs.problematic_count }}" >> sync_report.md
+          echo "- 总仓库数: $TOTAL_COUNT" >> sync_report.md
+          echo "- 成功同步: $HEALTHY_COUNT" >> sync_report.md
+          echo "- 跳过仓库: $PROBLEMATIC_COUNT" >> sync_report.md
           echo "" >> sync_report.md
           
           if [ -f problematic_repos.jsonl ] && [ -s problematic_repos.jsonl ]; then
@@ -304,4 +309,5 @@ jobs:
           echo "---" >> sync_report.md
           echo "*由 GitHub Actions 自动生成*" >> sync_report.md
           
+          echo "📄 同步报告内容:"
           cat sync_report.md
