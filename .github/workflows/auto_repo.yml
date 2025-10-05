@@ -1,110 +1,122 @@
 name: Z-autorepo
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 0 点自动运行
-  workflow_dispatch:     # 允许手动触发
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write  # 必须具有写入权限才能推送变更
+      contents: write
 
     steps:
-      # 步骤1：检出当前仓库（必须使用 token 才能后续推送）
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整 Git 历史
-          token: ${{ secrets.GITHUB_TOKEN }}  # 使用 GitHub 自动生成的 token
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤2：设置智能同步环境
       - name: Setup Smart Sync
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
-
-          # 验证 Git 状态
-          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-            echo "❌ 错误：当前不在 Git 仓库中"
-            exit 1
-          fi
-
-          # 安装必要工具（带重试机制）
+          
           echo "🔧 安装依赖..."
-          for i in {1..3}; do
-            sudo apt-get update && sudo apt-get install -y parallel jq rsync && break
-            sleep 5
-            if [ $i -eq 3 ]; then
-              echo "❌ 依赖安装失败"
-              exit 1
-            fi
-          done
+          sudo apt-get update
+          sudo apt-get install -y parallel jq rsync curl
 
-          # 初始化 .syncignore 文件
-          touch .syncignore
+          # 创建详细的调试信息
+          echo "=== 系统信息 ==="
+          echo "工作目录: $(pwd)"
+          echo "Git 状态: $(git status --porcelain | wc -l) 个变更"
+          echo "工具版本:"
+          which jq && jq --version || echo "jq 未安装"
+          which parallel && parallel --version || echo "parallel 未安装"
+          which rsync && rsync --version | head -1 || echo "rsync 未安装"
 
-          # 检测本地修改的文件（避免覆盖）
-          echo "🔍 检测本地修改文件..."
-          git ls-files -m > .local_changes || {
-            echo "⚠️ 没有检测到本地修改文件"
-            touch .local_changes
-          }
-
-          # 合并排除规则到 .syncignore
-          cat .syncignore .local_changes 2>/dev/null | sort -u > .tmp_ignore
-          mv .tmp_ignore .syncignore
-
-          # 显示受保护文件列表
-          echo "🛡️ 当前受保护文件："
-          if [ -s .syncignore ]; then
-            cat .syncignore | sed 's/^/  - /'
-          else
-            echo "  （无保护文件）"
-          fi
-
-      # 步骤3：执行智能同步
       - name: Run Smart Sync
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
 
-          # 定义智能同步函数
+          # 改进的智能同步函数，包含更好的错误处理
           smart_sync() {
             local repo=$1
-            local url=$(jq -r '.url' <<< "$repo")
-            local dest=$(jq -r '.dest' <<< "$repo")
-            local branch=$(jq -r '.branch' <<< "$repo")
-            local dir=$(jq -r '.dir // empty' <<< "$repo")
+            echo "=== 开始处理仓库 ==="
+            echo "原始数据: $repo"
             
-            echo "🔁 正在同步 [$dest] (分支: $branch)"
+            # 安全地解析 JSON 字段
+            local url=$(echo "$repo" | jq -r '.url // empty')
+            local dest=$(echo "$repo" | jq -r '.dest // empty')
+            local branch=$(echo "$repo" | jq -r '.branch // "main"')
+            local dir=$(echo "$repo" | jq -r '.dir // empty')
             
-            # 克隆源仓库到临时目录
+            # 验证必要字段
+            if [ -z "$url" ] || [ -z "$dest" ]; then
+              echo "❌ 错误：缺少必要字段 (url 或 dest)"
+              return 1
+            fi
+            
+            echo "🔁 正在同步 [$dest] (分支: $branch, 目录: ${dir:-根目录})"
+            
+            # 创建临时目录
             temp_dir=$(mktemp -d)
-            if ! git clone --depth 1 --branch "$branch" "$url" "$temp_dir"; then
-              echo "❌ 克隆失败: $dest"
+            echo "临时目录: $temp_dir"
+            
+            # 克隆仓库（带重试机制）
+            for i in {1..3}; do
+              echo "尝试克隆 (第 $i 次)..."
+              if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
+                break
+              fi
+              if [ $i -eq 3 ]; then
+                echo "❌ 克隆失败: $url"
+                rm -rf "$temp_dir"
+                return 1
+              fi
+              sleep 5
+            done
+            
+            # 检查克隆的目录是否存在
+            if [ ! -d "$temp_dir" ]; then
+              echo "❌ 临时目录不存在"
+              return 1
+            fi
+            
+            echo "克隆成功，目录内容:"
+            ls -la "$temp_dir"
+            
+            # 检查源目录是否存在
+            local source_path="$temp_dir"
+            if [ -n "$dir" ]; then
+              source_path="$temp_dir/$dir"
+              if [ ! -d "$source_path" ]; then
+                echo "❌ 源目录不存在: $source_path"
+                ls -la "$temp_dir"
+                rm -rf "$temp_dir"
+                return 1
+              fi
+            fi
+            
+            # 创建目标目录
+            mkdir -p "$dest"
+            
+            # 执行同步
+            echo "执行同步: $source_path/ -> $dest/"
+            if rsync -av --delete "$source_path/" "$dest/" 2>&1; then
+              echo "✅ 同步完成 [$dest]"
+            else
+              echo "❌ 同步失败 [$dest]"
               rm -rf "$temp_dir"
               return 1
             fi
-
-            # 构建 rsync 排除参数（从 .syncignore 读取）
-            exclude_args=()
-            while read -r pattern; do
-              [ -n "$pattern" ] && exclude_args+=(--exclude="$pattern")
-            done < .syncignore
-
-            # 执行同步（保留目标目录结构）
-            mkdir -p "$dest"
-            if [ -n "$dir" ]; then
-              rsync -av --delete "${exclude_args[@]}" "$temp_dir/$dir/" "$dest/"
-            else
-              rsync -av --delete "${exclude_args[@]}" "$temp_dir/" "$dest/"
-            fi
-
+            
+            # 清理临时目录
             rm -rf "$temp_dir"
-            echo "✅ 完成 [$dest]"
+            return 0
           }
           export -f smart_sync
 
-          # 仓库配置列表（JSON 格式）
+          # 仓库配置列表
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
@@ -134,27 +146,35 @@ jobs:
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
-          # 使用 parallel 并行同步（最多 4 个并发）
-          echo "$REPOS" | jq -c '.[]' | parallel -j 4 --halt soon,fail=1 smart_sync
+          # 先测试单个仓库
+          echo "=== 测试单个仓库 ==="
+          test_repo='{"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"test-luci-app-advancedplus","branch":"main"}'
+          if ! smart_sync "$test_repo"; then
+            echo "❌ 测试仓库失败，停止执行"
+            exit 1
+          fi
 
-          # 同步完成后，标记所有文件为 Git 可跟踪
-          git add .
+          # 如果测试成功，执行全部同步（减少并发数）
+          echo "=== 开始同步所有仓库 ==="
+          echo "$REPOS" | jq -c '.[]' | parallel -j 2 --halt soon,fail=1 smart_sync
 
-      # 步骤4：提交变更到仓库
+          echo "✅ 所有仓库同步完成"
+
       - name: Commit Changes
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
           
-          # 配置 Git 用户信息
           git config --global user.name "zxmlysxl"
           git config --global user.email "zxmlysxl@gmail.com"
           
-          # 提交所有变更（包括同步的文件）
-          git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: sync repositories [skip ci]"
+          # 检查是否有变更
+          if git status --porcelain | grep -q .; then
+            echo "检测到变更:"
+            git status --porcelain
+            git add .
+            git commit -m "chore: sync repositories $(date +'%Y-%m-%d %H:%M:%S') [skip ci]"
             git push
-            echo "✅ 已提交所有变更"
+            echo "✅ 已提交变更"
           else
             echo "🟢 无变更需要提交"
           fi
