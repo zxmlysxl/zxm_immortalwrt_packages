@@ -1,8 +1,8 @@
 name: Z-autorepo
 on:
   schedule:
-    - cron: '0 0 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # 每天 UTC 时间 0 点自动运行
+  workflow_dispatch:     # 允许手动触发
 
 jobs:
   sync:
@@ -12,160 +12,296 @@ jobs:
       contents: write
 
     steps:
+      # 步骤1：检出当前仓库
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Smart Sync
+      # 步骤2：设置环境和依赖
+      - name: Setup Environment
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
-          
+
           echo "🔧 安装依赖..."
           sudo apt-get update
           sudo apt-get install -y parallel jq rsync curl
 
-          # 创建详细的调试信息
-          echo "=== 系统信息 ==="
-          echo "工作目录: $(pwd)"
-          echo "Git 状态: $(git status --porcelain | wc -l) 个变更"
-          echo "工具版本:"
-          which jq && jq --version || echo "jq 未安装"
-          which parallel && parallel --version || echo "parallel 未安装"
-          which rsync && rsync --version | head -1 || echo "rsync 未安装"
+          # 配置 Git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global http.postBuffer 524288000
 
-      - name: Run Smart Sync
-  run: |
-    cd "$GITHUB_WORKSPACE" || exit 1
+          echo "✅ 环境设置完成"
 
-    # 改进的智能同步函数，包含仓库存在性检查
-    smart_sync() {
-      local repo=$1
-      
-      echo "=== 开始处理仓库 ==="
-      local url=$(echo "$repo" | jq -r '.url // empty')
-      local dest=$(echo "$repo" | jq -r '.dest // empty')
-      local branch=$(echo "$repo" | jq -r '.branch // "main"')
-      local dir=$(echo "$repo" | jq -r '.dir // empty')
-      
-      # 验证必要字段
-      if [ -z "$url" ] || [ -z "$dest" ]; then
-        echo "❌ 错误：缺少必要字段 (url 或 dest)"
-        return 0  # 跳过而不是失败
-      fi
-      
-      echo "🔁 正在同步 [$dest] (分支: $branch)"
-      
-      # 首先检查仓库是否存在
-      echo "🔍 检查仓库可访问性..."
-      local repo_path=${url#https://github.com/}
-      repo_path=${repo_path%.git}
-      
-      if ! curl -s -I "https://api.github.com/repos/$repo_path" | grep -q "200 OK"; then
-        echo "❌ 仓库不存在或无法访问: $url"
-        echo "📝 建议：从同步列表中移除该项目"
-        return 0  # 跳过这个仓库
-      fi
-      
-      # 创建临时目录
-      temp_dir=$(mktemp -d)
-      
-      # 克隆仓库（带重试机制）
-      local max_retries=3
-      for i in $(seq 1 $max_retries); do
-        echo "尝试克隆 (第 $i/$max_retries 次)..."
-        
-        if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
-          echo "✅ 克隆成功"
-          break
-        else
-          if [ $i -eq $max_retries ]; then
-            echo "❌ 克隆失败，跳过仓库: $url"
-            rm -rf "$temp_dir"
-            return 0  # 跳过而不是失败
+      # 步骤3：仓库健康检查
+      - name: Repository Health Check
+        id: health-check
+        run: |
+          cd "$GITHUB_WORKSPACE" || exit 1
+
+          # 仓库配置列表
+          REPOS='[
+            {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
+            {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
+            {"url":"https://github.com/sirpdboy/luci-app-chatgpt-web.git","dest":"luci-app-chatgpt-web","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-netwizard.git","dir":"luci-app-netwizard","dest":"luci-app-netwizard","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
+            {"url":"https://github.com/sirpdboy/luci-app-watchdog.git","dest":"watchdog","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-taskplan.git","dir":"luci-app-taskplan","dest":"luci-app-taskplan","branch":"master"},
+            {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-nft-timecontrol","dest":"luci-app-nft-timecontrol","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-poweroffdevice.git","dir":"luci-app-poweroffdevice","dest":"luci-app-poweroffdevice","branch":"js"},
+            {"url":"https://github.com/tty228/luci-app-wechatpush.git","dest":"luci-app-wechatpush","branch":"master"},
+            {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
+            {"url":"https://github.com/EasyTier/luci-app-easytier.git","dest":"easytier","branch":"main"},
+            {"url":"https://github.com/asvow/luci-app-tailscale.git","dest":"luci-app-tailscale","branch":"main"},
+            {"url":"https://github.com/nikkinikki-org/OpenWrt-nikki.git","dest":"nikki","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
+            {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
+            {"url":"https://github.com/sos801107/luci-app-ota.git","dest":"luci-app-ota","branch":"main"},
+            {"url":"https://github.com/brvphoenix/luci-app-wrtbwmon.git","dir":"luci-app-wrtbwmon","dest":"luci-app-wrtbwmon","branch":"master"},
+            {"url":"https://github.com/brvphoenix/wrtbwmon.git","dir":"wrtbwmon","dest":"wrtbwmon","branch":"new"},
+            {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"luci-app-momo","dest":"luci-app-momo","branch":"main"},
+            {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"momo","dest":"momo","branch":"main"},
+            {"url":"https://github.com/vernesong/OpenClash.git","dir":"luci-app-openclash","dest":"luci-app-openclash","branch":"master"},
+            {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
+          ]'
+
+          # 检查仓库健康状态
+          check_repo_health() {
+            local repo=$1
+            local url=$(echo "$repo" | jq -r '.url // empty')
+            local dest=$(echo "$repo" | jq -r '.dest // empty')
+            
+            if [ -z "$url" ]; then
+              echo "❌ $dest - URL 为空"
+              return 1
+            fi
+            
+            local repo_path=${url#https://github.com/}
+            repo_path=${repo_path%.git}
+            
+            # 使用 GitHub API 检查仓库状态
+            local response_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/$repo_path")
+            
+            if [ "$response_code" = "200" ]; then
+              echo "✅ $dest - 健康"
+              echo "$repo" >> healthy_repos.jsonl
+              return 0
+            elif [ "$response_code" = "404" ]; then
+              echo "❌ $dest - 仓库不存在 (404)"
+              echo "$repo" >> problematic_repos.jsonl
+              return 1
+            elif [ "$response_code" = "403" ]; then
+              echo "⚠️ $dest - 访问受限 (403)，但仍尝试同步"
+              echo "$repo" >> healthy_repos.jsonl
+              return 0
+            else
+              echo "⚠️ $dest - 状态未知 ($response_code)，但仍尝试同步"
+              echo "$repo" >> healthy_repos.jsonl
+              return 0
+            fi
+          }
+          export -f check_repo_health
+
+          # 初始化文件
+          > healthy_repos.jsonl
+          > problematic_repos.jsonl
+
+          echo "🔍 开始仓库健康检查..."
+          echo "$REPOS" | jq -c '.[]' | parallel -j 5 check_repo_health
+
+          # 生成报告
+          healthy_count=$(wc -l < healthy_repos.jsonl 2>/dev/null || echo 0)
+          problematic_count=$(wc -l < problematic_repos.jsonl 2>/dev/null || echo 0)
+          total_count=$(echo "$REPOS" | jq 'length')
+
+          echo "📊 健康检查报告:"
+          echo "   总仓库数: $total_count"
+          echo "   健康仓库: $healthy_count"
+          echo "   问题仓库: $problematic_count"
+
+          # 输出问题仓库详情
+          if [ $problematic_count -gt 0 ]; then
+            echo "🚫 问题仓库列表:"
+            while IFS= read -r repo; do
+              local dest=$(echo "$repo" | jq -r '.dest')
+              local url=$(echo "$repo" | jq -r '.url')
+              echo "   - $dest: $url"
+            done < problematic_repos.jsonl
           fi
-          sleep 5
-        fi
-      done
-      
-      # 如果克隆成功，继续同步
-      if [ -d "$temp_dir" ] && [ -n "$(ls -A "$temp_dir" 2>/dev/null)" ]; then
-        local source_path="$temp_dir"
-        if [ -n "$dir" ] && [ -d "$temp_dir/$dir" ]; then
-          source_path="$temp_dir/$dir"
-        elif [ -n "$dir" ]; then
-          echo "⚠️ 指定目录 '$dir' 不存在，使用根目录"
-        fi
-        
-        # 创建目标目录并同步
-        mkdir -p "$dest"
-        echo "执行同步: $source_path/ -> $dest/"
-        
-        if rsync -av --delete "$source_path/" "$dest/" 2>&1; then
-          echo "✅ 同步完成 [$dest]"
-        else
-          echo "❌ 同步失败 [$dest]"
-        fi
-        
-        rm -rf "$temp_dir"
-      else
-        echo "❌ 克隆后目录为空，跳过同步"
-        rm -rf "$temp_dir"
-      fi
-      
-      return 0
-    }
-    export -f smart_sync
 
-    # 仓库配置列表 - 移除或注释掉已删除的仓库
-    REPOS='[
-      {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
-      {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
-      {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"js"},
-      {"url":"https://github.com/sirpdboy/luci-app-chatgpt-web.git","dest":"luci-app-chatgpt-web","branch":"main"},
-      {"url":"https://github.com/sirpdboy/luci-app-netwizard.git","dir":"luci-app-netwizard","dest":"luci-app-netwizard","branch":"main"},
-      {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
-      {"url":"https://github.com/sirpdboy/luci-app-watchdog.git","dest":"watchdog","branch":"main"},
-      {"url":"https://github.com/sirpdboy/luci-app-taskplan.git","dir":"luci-app-taskplan","dest":"luci-app-taskplan","branch":"master"},
-      {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-nft-timecontrol","dest":"luci-app-nft-timecontrol","branch":"main"},
-      {"url":"https://github.com/sirpdboy/luci-app-poweroffdevice.git","dir":"luci-app-poweroffdevice","dest":"luci-app-poweroffdevice","branch":"js"},
-      {"url":"https://github.com/tty228/luci-app-wechatpush.git","dest":"luci-app-wechatpush","branch":"master"},
-      {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
-      {"url":"https://github.com/EasyTier/luci-app-easytier.git","dest":"easytier","branch":"main"},
-      {"url":"https://github.com/asvow/luci-app-tailscale.git","dest":"luci-app-tailscale","branch":"main"},
-      {"url":"https://github.com/nikkinikki-org/OpenWrt-nikki.git","dest":"nikki","branch":"main"},
-      # {"url":"https://github.com/oppen321/luci-app-wolplus.git","dest":"luci-app-wolplus","branch":"main"},  # 仓库已删除
-      {"url":"https://github.com/xiaorouji/openwrt-passwall.git","dir":"luci-app-passwall","dest":"luci-app-passwall","branch":"main"},
-      {"url":"https://github.com/xiaorouji/openwrt-passwall2.git","dir":"luci-app-passwall2","dest":"luci-app-passwall2","branch":"main"},
-      {"url":"https://github.com/xiaorouji/openwrt-passwall-packages.git","dest":"openwrt-passwall-packages","branch":"main"},
-      {"url":"https://github.com/sos801107/luci-app-ota.git","dest":"luci-app-ota","branch":"main"},
-      {"url":"https://github.com/brvphoenix/luci-app-wrtbwmon.git","dir":"luci-app-wrtbwmon","dest":"luci-app-wrtbwmon","branch":"master"},
-      {"url":"https://github.com/brvphoenix/wrtbwmon.git","dir":"wrtbwmon","dest":"wrtbwmon","branch":"new"},
-      {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"luci-app-momo","dest":"luci-app-momo","branch":"main"},
-      {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"momo","dest":"momo","branch":"main"},
-      {"url":"https://github.com/vernesong/OpenClash.git","dir":"luci-app-openclash","dest":"luci-app-openclash","branch":"master"},
-      {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
-    ]'
+          # 设置输出变量
+          echo "healthy_count=$healthy_count" >> $GITHUB_OUTPUT
+          echo "problematic_count=$problematic_count" >> $GITHUB_OUTPUT
 
-    # 执行同步，即使有失败也继续
-    echo "$REPOS" | jq -c '.[]' | parallel -j 3 --halt soon,fail=0 smart_sync
+      # 步骤4：执行智能同步
+      - name: Run Smart Sync
+        run: |
+          cd "$GITHUB_WORKSPACE" || exit 1
 
-    echo "✅ 所有可用仓库同步完成"
-      - name: Commit Changes
+          # 增强的智能同步函数
+          smart_sync() {
+            local repo=$1
+            
+            local url=$(echo "$repo" | jq -r '.url // empty')
+            local dest=$(echo "$repo" | jq -r '.dest // empty')
+            local branch=$(echo "$repo" | jq -r '.branch // "main"')
+            local dir=$(echo "$repo" | jq -r '.dir // empty')
+            
+            # 验证必要字段
+            if [ -z "$url" ] || [ -z "$dest" ]; then
+              echo "❌ 错误：缺少必要字段 (url 或 dest)，跳过"
+              return 0
+            fi
+            
+            echo "🔁 正在同步 [$dest] (分支: $branch)"
+            
+            # 创建临时目录
+            temp_dir=$(mktemp -d)
+            
+            # 克隆仓库（带智能重试）
+            local max_retries=3
+            local clone_success=false
+            
+            for i in $(seq 1 $max_retries); do
+              echo "   尝试克隆 (第 $i/$max_retries 次)..."
+              
+              if git clone --depth 1 --branch "$branch" "$url" "$temp_dir" 2>&1; then
+                echo "   ✅ 克隆成功"
+                clone_success=true
+                break
+              else
+                echo "   ❌ 克隆失败"
+                if [ $i -eq $max_retries ]; then
+                  echo "   💡 达到最大重试次数，跳过仓库"
+                  rm -rf "$temp_dir"
+                  return 0
+                fi
+                sleep 10
+              fi
+            done
+            
+            # 如果克隆成功，执行同步
+            if [ "$clone_success" = true ] && [ -d "$temp_dir" ] && [ -n "$(ls -A "$temp_dir" 2>/dev/null)" ]; then
+              local source_path="$temp_dir"
+              if [ -n "$dir" ] && [ -d "$temp_dir/$dir" ]; then
+                source_path="$temp_dir/$dir"
+                echo "   使用子目录: $dir"
+              elif [ -n "$dir" ]; then
+                echo "   ⚠️ 指定目录 '$dir' 不存在，使用根目录"
+              fi
+              
+              # 创建目标目录并同步
+              mkdir -p "$dest"
+              echo "   执行同步: $source_path/ -> $dest/"
+              
+              if rsync -av --delete \
+                   --exclude=".git*" \
+                   --exclude=".github" \
+                   --exclude=".gitignore" \
+                   "$source_path/" "$dest/" 2>&1; then
+                echo "   ✅ 同步完成 [$dest]"
+                sync_success=true
+              else
+                echo "   ❌ 同步失败 [$dest]"
+                sync_success=false
+              fi
+            else
+              echo "   ❌ 克隆后目录为空，跳过同步"
+              sync_success=false
+            fi
+            
+            # 清理临时目录
+            rm -rf "$temp_dir"
+            
+            if [ "$sync_success" = true ]; then
+              return 0
+            else
+              return 0  # 即使失败也返回 0，不中断其他仓库同步
+            fi
+          }
+          export -f smart_sync
+
+          echo "🚀 开始同步健康仓库..."
+          
+          # 只同步健康仓库
+          if [ -f healthy_repos.jsonl ] && [ -s healthy_repos.jsonl ]; then
+            cat healthy_repos.jsonl | parallel -j 3 --halt soon,fail=0 smart_sync
+            echo "✅ 所有健康仓库同步完成"
+          else
+            echo "⚠️ 没有找到健康仓库，跳过同步"
+          fi
+
+          # 生成最终报告
+          echo "📋 同步总结:"
+          echo "   成功同步: $(find . -name "*.lua" -o -name "*.js" -o -name "*.md" 2>/dev/null | grep -v ".git" | wc -l) 个文件"
+          echo "   跳过仓库: ${{ steps.health-check.outputs.problematic_count }}"
+
+      # 步骤5：提交变更
+      - name: Commit and Push Changes
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
           
+          # 配置 Git 用户
           git config --global user.name "zxmlysxl"
           git config --global user.email "zxmlysxl@gmail.com"
           
-          # 检查是否有变更
+          # 检查变更
           if git status --porcelain | grep -q .; then
-            echo "检测到变更:"
-            git status --porcelain
+            echo "📝 检测到变更，准备提交..."
+            
+            # 显示变更概要
+            echo "变更文件:"
+            git status --porcelain | sed 's/^/   /'
+            
+            # 添加并提交
             git add .
-            git commit -m "chore: sync repositories $(date +'%Y-%m-%d %H:%M:%S') [skip ci]"
-            git push
-            echo "✅ 已提交变更"
+            git commit -m "chore: auto-sync repositories $(date +'%Y-%m-%d %H:%M:%S') [skip ci]"
+            
+            # 推送变更
+            if git push; then
+              echo "✅ 变更已提交并推送"
+            else
+              echo "❌ 推送失败，尝试拉取最新变更后重试"
+              git pull --rebase
+              git push
+            fi
           else
             echo "🟢 无变更需要提交"
           fi
+
+      # 步骤6：生成同步报告（可选）
+      - name: Generate Sync Report
+        if: always()
+        run: |
+          cd "$GITHUB_WORKSPACE" || exit 1
+          
+          echo "## 🔄 自动同步报告" > sync_report.md
+          echo "" >> sync_report.md
+          echo "**同步时间:** $(date)" >> sync_report.md
+          echo "" >> sync_report.md
+          echo "### 📊 统计信息" >> sync_report.md
+          echo "- 总仓库数: ${{ steps.health-check.outputs.healthy_count + steps.health-check.outputs.problematic_count }}" >> sync_report.md
+          echo "- 成功同步: ${{ steps.health-check.outputs.healthy_count }}" >> sync_report.md
+          echo "- 跳过仓库: ${{ steps.health-check.outputs.problematic_count }}" >> sync_report.md
+          echo "" >> sync_report.md
+          
+          if [ -f problematic_repos.jsonl ] && [ -s problematic_repos.jsonl ]; then
+            echo "### 🚫 跳过的仓库" >> sync_report.md
+            while IFS= read -r repo; do
+              local dest=$(echo "$repo" | jq -r '.dest')
+              local url=$(echo "$repo" | jq -r '.url')
+              echo "- $dest: $url" >> sync_report.md
+            done < problematic_repos.jsonl
+          fi
+          
+          echo "" >> sync_report.md
+          echo "---" >> sync_report.md
+          echo "*由 GitHub Actions 自动生成*" >> sync_report.md
+          
+          cat sync_report.md
