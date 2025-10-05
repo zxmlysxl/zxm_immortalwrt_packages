@@ -130,6 +130,7 @@ jobs:
             {"url":"https://github.com/brvphoenix/wrtbwmon.git","dir":"wrtbwmon","dest":"wrtbwmon","branch":"new"},
             {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"luci-app-momo","dest":"luci-app-momo","branch":"main"},
             {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"momo","dest":"momo","branch":"main"},
+            {"url":"https://github.com/vernesong/OpenClash.git","dir":"luci-app-openclash","dest":"luci-app-openclash","branch":"master"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
