@@ -50,7 +50,7 @@ jobs:
             {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
             {"url":"https://github.com/sirpdboy/luci-app-watchdog.git","dest":"watchdog","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-taskplan.git","dir":"luci-app-taskplan","dest":"luci-app-taskplan","branch":"master"},
-            {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-nft-timecontrol","dest":"luci-app-nft-timecontrol","branch":"main"},
+            {"url":"https://github.com/sirpdboy/luci-app-timecontrol.git","dir":"luci-app-timecontrol","dest":"luci-app-timecontrol","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-poweroffdevice.git","dir":"luci-app-poweroffdevice","dest":"luci-app-poweroffdevice","branch":"js"},
             {"url":"https://github.com/tty228/luci-app-wechatpush.git","dest":"luci-app-wechatpush","branch":"master"},
             {"url":"https://github.com/gdy666/luci-app-lucky.git","dest":"lucky","branch":"main"},
