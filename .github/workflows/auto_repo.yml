@@ -44,8 +44,8 @@ jobs:
           REPOS='[
             {"url":"https://github.com/sirpdboy/luci-app-advancedplus.git","dest":"luci-app-advancedplus","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-adguardhome.git","dir":"luci-app-adguardhome","dest":"luci-app-adguardhome","branch":"lua"},
-            {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"kucat","branch":"master"},
-            {"url":"https://github.com/sirpdboy/luci-app-kucat-config.git","dest":"kucat-config","branch":"master"},
+            {"url":"https://github.com/sirpdboy/luci-theme-kucat.git","dest":"luci-theme-kucat","branch":"master"},
+            {"url":"https://github.com/sirpdboy/luci-app-kucat-config.git","dest":"luci-app-kucat-config","branch":"master"},
             {"url":"https://github.com/sirpdboy/luci-app-chatgpt-web.git","dest":"luci-app-chatgpt-web","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-netwizard.git","dir":"luci-app-netwizard","dest":"luci-app-netwizard","branch":"main"},
             {"url":"https://github.com/sirpdboy/luci-app-netspeedtest.git","dest":"netspeedtest","branch":"js"},
