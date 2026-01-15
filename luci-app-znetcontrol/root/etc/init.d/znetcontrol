@@ -1,0 +1,106 @@
+#!/bin/sh
+# ZNetControl init.d 脚本 - 完整版
+
+START=99
+STOP=10
+PID_FILE="/var/run/znetcontrol.pid"
+DAEMON="/usr/bin/znetcontrol.sh"
+NAME="znetcontrol"
+DESC="ZNetControl Internet Access Control"
+
+start() {
+    echo "Starting $DESC..."
+    
+    # 检查是否已运行
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "$DESC is already running (PID: $pid)"
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+    
+    # 启动服务
+    if $DAEMON daemon >/dev/null 2>&1; then
+        sleep 2
+        
+        if [ -f "$PID_FILE" ]; then
+            local pid=$(cat "$PID_FILE")
+            echo "Started $DESC (PID: $pid)"
+            return 0
+        else
+            echo "Failed to start $DESC (no PID file)"
+            return 1
+        fi
+    else
+        echo "Failed to start $DESC"
+        return 1
+    fi
+}
+
+stop() {
+    echo "Stopping $DESC..."
+    
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ]; then
+            $DAEMON stop
+            echo "Stopped $DESC"
+            return 0
+        fi
+    fi
+    
+    # 如果没有PID文件，尝试直接停止
+    $DAEMON stop
+    echo "Stopped $DESC"
+    return 0
+}
+
+restart() {
+    echo "Restarting $DESC..."
+    stop
+    sleep 3
+    start
+}
+
+status() {
+    $DAEMON status
+    return $?
+}
+
+reload() {
+    echo "Reloading $DESC rules..."
+    $DAEMON reload
+    return $?
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    status)
+        status
+        ;;
+    enable)
+        ln -sf /etc/init.d/$NAME /etc/rc.d/S99$NAME 2>/dev/null
+        ln -sf /etc/init.d/$NAME /etc/rc.d/K10$NAME 2>/dev/null
+        echo "Enabled $DESC"
+        ;;
+    disable)
+        rm -f /etc/rc.d/*$NAME* 2>/dev/null
+        echo "Disabled $DESC"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status|enable|disable}"
+        exit 1
+        ;;
+esac
+
+exit 0

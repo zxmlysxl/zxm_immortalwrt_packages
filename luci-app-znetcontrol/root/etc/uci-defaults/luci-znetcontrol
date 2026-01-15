@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# 只在真实系统运行
+[ -n "$IPKG_INSTROOT" ] && exit 0
+
+# 设置基本配置
+if [ ! -f /etc/config/znetcontrol ] || [ ! -s /etc/config/znetcontrol ]; then
+    uci import znetcontrol <<EOF
+config global 'settings'
+    option enabled '1'
+    option scan_interval '60'
+    option log_level 'info'

@@ -1,0 +1,14 @@
+config global 'settings'
+    option enabled '1'
+    option scan_interval '60'
+    option log_level 'info'
+
+# 示例规则
+# config rule 'example_rule'
+#     option name '孩子晚间上网限制'
+#     option mac 'AA:BB:CC:DD:EE:FF'
+#     option enabled '1'
+#     option days '1,2,3,4,5'
+#     option start_time '22:00'
+#     option end_time '06:00'
+#     option date_range ''
