@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=1.1.1
+PKG_VERSION:=1.1.2
 PKG_RELEASE:=20260119
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
@@ -17,7 +17,7 @@ define Package/luci-app-znetcontrol
 endef
 
 define Package/luci-app-znetcontrol/description
-  基于MAC地址的网络访问时间管控系统
+  基于IP/MAC地址的网络访问时间管控系统
   支持按时间段、星期和日期范围控制设备上网。
 endef
 
