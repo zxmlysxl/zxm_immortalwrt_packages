@@ -1,0 +1,32 @@
+{
+    "luci-app-znetcontrol": {
+        "description": "Grant access to ZNetControl",
+        "read": {
+            "ubus": {
+                "luci": ["getFeatures"],
+                "uci": ["get"],
+                "file": {
+                    "/etc/config/znetcontrol": ["read"],
+                    "/var/log/znetcontrol.log": ["read"],
+                    "/tmp/dhcp.leases": ["read"]
+                },
+                "network.interface": ["dump"],
+                "network.device": ["status"],
+                "network.wireless": ["status"]
+            },
+            "uci": ["znetcontrol", "network", "dhcp", "wireless"]
+        },
+        "write": {
+            "ubus": {
+                "luci": ["setFeatures"],
+                "uci": ["set", "add", "delete", "commit", "revert"],
+                "file": {
+                    "/etc/config/znetcontrol": ["write"]
+                },
+                "service": ["list", "get", "set", "add", "delete", "update", "reload", "restart", "start", "stop"],
+                "system": ["syslog"]
+            },
+            "uci": ["znetcontrol"]
+        }
+    }
+}

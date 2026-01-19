@@ -1,0 +1,1071 @@
+<%+header%>
+<div class="cbi-map">
+    <h2 name="content"><%:系统日志%></h2>
+    
+    <fieldset class="cbi-section">
+        <legend><%:实时日志%></legend>
+        <div class="cbi-value">
+            <div class="cbi-value-field" style="width: 100%;">
+                <!-- 优化的工具栏 -->
+                <div class="log-toolbar" style="margin-bottom: 15px;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
+                        <button class="cbi-button cbi-button-action" onclick="refreshLogs()">
+                            <i class="icon icon-refresh"></i> 刷新日志
+                        </button>
+                        <button class="cbi-button cbi-button-reset" onclick="clearLogs()">
+                            <i class="icon icon-trash"></i> 清空日志
+                        </button>
+                        <button class="cbi-button cbi-button-apply" onclick="downloadLogs()">
+                            <i class="icon icon-download"></i> 下载日志
+                        </button>
+                    </div>
+                    
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                        <button class="cbi-button" onclick="showSystemStatus()" title="显示系统状态">
+                            <i class="icon icon-info"></i> 系统状态
+                        </button>
+                        <button class="cbi-button" onclick="toggleFullscreen()" title="切换全屏模式">
+                            <i class="icon icon-maximize"></i> 全屏
+                        </button>
+                        <button class="cbi-button" onclick="scrollToBottom()" title="滚动到底部">
+                            <i class="icon icon-arrow-down"></i> 到底部
+                        </button>
+                        <button class="cbi-button" onclick="scrollToTop()" title="滚动到顶部">
+                            <i class="icon icon-arrow-up"></i> 到顶部
+                        </button>
+                        
+                        <span style="margin-left: auto; display: flex; gap: 10px; align-items: center;">
+                            <span style="font-size: 12px;">过滤:</span>
+                            <select id="log-level" onchange="filterLogs()" style="padding: 5px 10px; border-radius: 4px;">
+                                <option value="all">全部日志</option>
+                                <option value="info">仅信息</option>
+                                <option value="success">仅成功</option>
+                                <option value="warn">仅警告</option>
+                                <option value="error">仅错误</option>
+                                <option value="rule">仅规则相关</option>
+                            </select>
+                            
+                            <span style="font-size: 12px;">显示:</span>
+                            <select id="log-lines" onchange="changeMaxLines()" style="padding: 5px 10px; border-radius: 4px;">
+                                <option value="100">100行</option>
+                                <option value="500">500行</option>
+                                <option value="1000" selected>1000行</option>
+                                <option value="2000">2000行</option>
+                                <option value="5000">5000行</option>
+                            </select>
+                            
+                            <span style="font-size: 12px;">刷新:</span>
+                            <select id="refresh-interval" onchange="changeRefreshInterval()" style="padding: 5px 10px; border-radius: 4px;">
+                                <option value="5">5秒</option>
+                                <option value="10">10秒</option>
+                                <option value="30" selected>30秒</option>
+                                <option value="60">60秒</option>
+                                <option value="120">2分钟</option>
+                                <option value="300">5分钟</option>
+                                <option value="0">不刷新</option>
+                            </select>
+                            
+                            <button class="cbi-button" onclick="toggleAutoRefresh()" id="auto-refresh-btn" title="切换自动刷新">
+                                <i class="icon icon-clock"></i> 自动刷新
+                            </button>
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- 日志显示区域 -->
+                <div style="width: 100%; position: relative;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 5px 0; border-bottom: 1px solid #eee;">
+                        <div style="font-size: 12px; color: #666;">
+                            <i class="icon icon-file-text"></i> 日志文件: 
+                            <code>/var/log/znetcontrol.log</code>
+                        </div>
+                        <div style="font-size: 12px; color: #666;">
+                            共 <span id="line-count">0</span> 行 | 
+                            刷新间隔: <span id="refresh-display">30</span>秒 |
+                            最后更新: <span id="last-update">--</span>
+                        </div>
+                    </div>
+                    
+                    <pre id="log-content" style="
+                        width: 100%;
+                        height: 500px;
+                        overflow: auto;
+                        background: #1a1a1a;
+                        color: #e0e0e0;
+                        padding: 15px;
+                        border: 2px solid #333;
+                        border-radius: 8px;
+                        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+                        font-size: 12px;
+                        line-height: 1.4;
+                        white-space: pre-wrap;
+                        word-wrap: break-word;
+                        margin: 0;
+                    "></pre>
+                    
+                    <!-- 移动端浮动按钮 -->
+                    <div id="mobile-float-buttons" style="display: none; position: fixed; bottom: 80px; right: 20px; z-index: 1000;">
+                        <button onclick="refreshLogs()" style="
+                            width: 50px;
+                            height: 50px;
+                            border-radius: 50%;
+                            background: #007bff;
+                            color: white;
+                            border: none;
+                            margin-bottom: 10px;
+                            font-size: 20px;
+                            cursor: pointer;
+                            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                        ">
+                            <i class="icon icon-refresh"></i>
+                        </button>
+                        <button onclick="scrollToBottom()" style="
+                            width: 50px;
+                            height: 50px;
+                            border-radius: 50%;
+                            background: #28a745;
+                            color: white;
+                            border: none;
+                            font-size: 20px;
+                            cursor: pointer;
+                            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                        ">
+                            <i class="icon icon-arrow-down"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+    
+    <!-- 系统状态 -->
+    <fieldset class="cbi-section" id="system-status" style="display: none;">
+        <legend><%:系统状态%></legend>
+        <div class="cbi-value">
+            <div class="cbi-value-field">
+                <pre id="status-content" style="
+                    background: #2d2d2d;
+                    color: #e0e0e0;
+                    padding: 15px;
+                    border-radius: 5px;
+                    font-family: monospace;
+                    white-space: pre;
+                    overflow: auto;
+                    max-height: 300px;
+                "></pre>
+            </div>
+        </div>
+    </fieldset>
+    
+    <!-- 日志说明 -->
+    <fieldset class="cbi-section">
+        <legend><%:日志说明%></legend>
+        <div class="cbi-value">
+            <div class="cbi-value-field">
+                <div id="log-description-container">
+                    <!-- 这里的内容由JavaScript动态生成 -->
+                </div>
+            </div>
+        </div>
+    </fieldset>
+</div>
+
+<script>
+// ========== 工具函数 ==========
+function escapeHtml(text) {
+    if (text == null) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+        .replace(/\n/g, '<br>');
+}
+
+// ========== 全局变量 ==========
+let isMobile = false;
+let maxLines = 1000;
+let autoRefreshInterval = null;
+let autoRefreshEnabled = true;
+let autoRefreshIntervalMs = 30000; // 默认30秒
+let currentLogs = [];
+
+// ========== 配置管理 ==========
+function loadConfig() {
+    // 尝试从服务器获取配置，失败则使用默认值
+    return fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_config")%>')
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(config => {
+            // 更新自动刷新间隔
+            if (config.log_auto_refresh) {
+                autoRefreshIntervalMs = parseInt(config.log_auto_refresh) * 1000;
+                
+                // 更新选择框
+                const refreshSelect = document.getElementById('refresh-interval');
+                if (refreshSelect) {
+                    refreshSelect.value = config.log_auto_refresh;
+                }
+                
+                // 更新显示
+                const refreshDisplay = document.getElementById('refresh-display');
+                if (refreshDisplay) {
+                    refreshDisplay.textContent = config.log_auto_refresh;
+                }
+            }
+            
+            // 更新最大行数
+            if (config.log_max_lines) {
+                maxLines = parseInt(config.log_max_lines);
+                const linesSelect = document.getElementById('log-lines');
+                if (linesSelect) {
+                    linesSelect.value = config.log_max_lines;
+                }
+            }
+            
+            console.log('配置加载成功:', config);
+            return config;
+        })
+        .catch(error => {
+            console.warn('加载配置失败，使用默认值:', error);
+            // 使用默认值
+            autoRefreshIntervalMs = 30000;
+            maxLines = 1000;
+            return {
+                log_auto_refresh: '30',
+                log_max_lines: '1000',
+                log_backup_enabled: '0'
+            };
+        });
+}
+
+function saveConfig(config) {
+    return fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/save_config")%>', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            console.log('配置保存成功');
+        }
+        return data;
+    })
+    .catch(error => {
+        console.error('保存配置失败:', error);
+        return { success: false, message: error.message };
+    });
+}
+
+// ========== 核心功能 ==========
+function updateTimestamp() {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('zh-CN');
+    const timeStr = now.toLocaleTimeString('zh-CN', { 
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    document.getElementById('last-update').textContent = dateStr + ' ' + timeStr;
+}
+
+function refreshLogs() {
+    const logElement = document.getElementById('log-content');
+    const lineCountElement = document.getElementById('line-count');
+    
+    // 显示加载状态
+    logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">正在加载日志...</div>';
+    
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_logs")%>')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('HTTP错误: ' + response.status);
+            }
+            return response.json();
+        })
+        .then(logs => {
+            if (!Array.isArray(logs)) {
+                throw new Error('返回数据格式错误');
+            }
+            
+            currentLogs = logs; // 保存日志用于过滤
+            
+            if (logs.length === 0) {
+                logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">暂无日志记录</div>';
+                lineCountElement.textContent = '0';
+            } else {
+                // 限制显示行数
+                let displayLogs = logs;
+                if (logs.length > maxLines) {
+                    displayLogs = logs.slice(-maxLines);
+                }
+                
+                // 应用当前过滤器
+                const level = document.getElementById('log-level').value;
+                if (level !== 'all') {
+                    displayLogs = filterByLevel(displayLogs, level);
+                }
+                
+                let html = '';
+                displayLogs.forEach(log => {
+                    html += formatLogLine(log) + '<br>';
+                });
+                logElement.innerHTML = html;
+                lineCountElement.textContent = displayLogs.length;
+                
+                // 滚动到底部
+                setTimeout(() => {
+                    logElement.scrollTop = logElement.scrollHeight;
+                }, 100);
+            }
+            updateTimestamp();
+        })
+        .catch(error => {
+            console.error('加载日志失败:', error);
+            logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #f44747;">' +
+                                  '加载日志失败<br>' + escapeHtml(error.message) + '<br>' +
+                                  '请刷新页面重试</div>';
+            lineCountElement.textContent = '0';
+        });
+}
+
+function filterByLevel(logs, level) {
+    return logs.filter(log => {
+        if (!log) return false;
+        
+        switch (level) {
+            case 'info':
+                return log.includes(' - ') && 
+                       !log.includes('✅') && 
+                       !log.includes('⚠') && 
+                       !log.includes('❌') &&
+                       !log.includes('📊') &&
+                       !log.includes('🔕') &&
+                       !log.includes('⏰');
+            case 'success':
+                return log.includes('✅');
+            case 'warn':
+                return log.includes('⚠');
+            case 'error':
+                return log.includes('❌');
+            case 'rule':
+                return log.includes('解析规则') || 
+                       log.includes('成功添加') || 
+                       log.includes('规则不在生效时间') ||
+                       log.includes('规则加载统计') ||
+                       log.includes('添加失败') ||
+                       log.includes('规则已禁用') ||
+                       log.includes('目标类型');
+            default:
+                return true;
+        }
+    });
+}
+
+function filterLogs() {
+    const level = document.getElementById('log-level').value;
+    
+    if (level === 'all') {
+        refreshLogs();
+        return;
+    }
+    
+    const logElement = document.getElementById('log-content');
+    const lineCountElement = document.getElementById('line-count');
+    
+    if (currentLogs.length === 0) {
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">没有日志数据</div>';
+        lineCountElement.textContent = '0';
+        return;
+    }
+    
+    // 限制显示行数
+    let displayLogs = currentLogs;
+    if (currentLogs.length > maxLines) {
+        displayLogs = currentLogs.slice(-maxLines);
+    }
+    
+    const filtered = filterByLevel(displayLogs, level);
+    
+    if (filtered.length === 0) {
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">没有匹配的日志</div>';
+        lineCountElement.textContent = '0';
+    } else {
+        let html = '';
+        filtered.forEach(log => {
+            html += formatLogLine(log) + '<br>';
+        });
+        logElement.innerHTML = html;
+        lineCountElement.textContent = filtered.length;
+    }
+}
+
+function formatLogLine(log) {
+    if (!log) return '';
+    
+    // 处理分隔线
+    if (log.includes('═') || log.includes('║') || log.includes('╔') || 
+        log.includes('╚') || log.includes('─') || log.includes('│') ||
+        log.includes('┌') || log.includes('└')) {
+        return '<span style="color: #4ec9b0;">' + escapeHtml(log) + '</span>';
+    }
+    
+    // 处理规则统计
+    if (log.includes('📊')) {
+        return '<span style="color: #4ec9b0; font-weight: bold;">' + escapeHtml(log) + '</span>';
+    }
+    
+    // 处理更新开始/结束标记
+    if (log.includes('======') || log.includes('============')) {
+        return '<span style="color: #569cd6; font-weight: bold;">' + escapeHtml(log) + '</span>';
+    }
+    
+    // 处理带时间戳的日志
+    const timestampMatch = log.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?: - (.*))?$/);
+    if (timestampMatch) {
+        const timestamp = timestampMatch[1];
+        const message = timestampMatch[2] || '';
+        
+        let color = '#9cdcfe'; // 默认信息色
+        let icon = '';
+        
+        if (message.includes('✅')) {
+            color = '#6a9955';
+            icon = '✅ ';
+        } else if (message.includes('❌')) {
+            color = '#f44747';
+            icon = '❌ ';
+        } else if (message.includes('⚠')) {
+            color = '#ffcc00';
+            icon = '⚠ ';
+        } else if (message.includes('⏰')) {
+            color = '#ce9178';
+            icon = '⏰ ';
+        } else if (message.includes('🔕')) {
+            color = '#b5cea8';
+            icon = '🔕 ';
+        } else if (message.includes('解析规则')) {
+            color = '#c586c0';
+        } else if (message.includes('重新加载规则') || message.includes('从配置文件加载规则')) {
+            color = '#569cd6';
+        }
+        
+        return '<span style="color: #569cd6;">' + escapeHtml(timestamp) + '</span> - ' +
+               '<span style="color: ' + color + '">' + icon + escapeHtml(message) + '</span>';
+    }
+    
+    return '<span style="color: #9cdcfe;">' + escapeHtml(log) + '</span>';
+}
+
+function clearLogs() {
+    if (confirm('确定要清空所有日志吗？')) {
+        fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/clear_logs")%>', { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('HTTP错误: ' + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                setTimeout(refreshLogs, 1000);
+            } else {
+                alert('操作失败: ' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            alert('操作失败: ' + error.message);
+        });
+    }
+}
+
+function downloadLogs() {
+    const content = currentLogs.join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'znetcontrol_' + new Date().toISOString().slice(0, 10) + '.log';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// ========== 系统状态功能 ==========
+function showSystemStatus() {
+    const statusSection = document.getElementById('system-status');
+    const statusContent = document.getElementById('status-content');
+    
+    statusContent.textContent = '正在加载系统状态...';
+    statusSection.style.display = 'block';
+    
+    // 并行获取所有数据
+    Promise.all([
+        fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_status")%>')
+            .then(response => response.json())
+            .catch(error => null),
+        
+        fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_devices")%>')
+            .then(response => response.json())
+            .catch(error => null),
+        
+        fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/firewall_status")%>')
+            .then(response => response.json())
+            .catch(error => null)
+    ])
+    .then(([status, devices, firewallStatus]) => {
+        const now = new Date();
+        const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+        const weekday = weekdays[now.getDay()];
+        
+        let statusText = `┌────────────────────────────────────────────┐
+│           佐罗上网管控系统状态                 │
+├────────────────────────────────────────────┤
+│    控制模式: MAC/IP地址时间控制              │
+│    版本: ${status?.version || '1.1.1'} | 作者: zuoxm  │
+├────────────────────────────────────────────┤
+│ 当前时间: ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', {hour12: false})} │
+│ 星期: ${weekday}                           │
+├────────────────────────────────────────────┤
+│ 服务状态: ${status?.running ? '✅ 运行中' : '❌ 已停止'} │
+│ 运行时间: ${status?.uptime || '--'}        │
+├────────────────────────────────────────────┤
+│ 规则统计:                                  │
+│  总规则数: ${status?.total_rules || 0}     │
+│  已启用规则: ${status?.enabled_rules || 0} │
+│  当前生效规则: ${firewallStatus?.blocked_count || 0} │
+│  防火墙表: ${firewallStatus?.table_exists ? '✅ 存在' : '❌ 不存在'} │
+│  MAC规则数: ${firewallStatus?.mac_count || 0} │
+│  IP规则数: ${firewallStatus?.ip_count || 0} │
+├────────────────────────────────────────────┤
+│ 网络统计:                                  │
+│  当前在线设备: ${devices?.length || 0}     │
+│  日志显示: ${document.getElementById('line-count').textContent} 行 │
+│  最后更新: ${document.getElementById('last-update').textContent} │
+└────────────────────────────────────────────┘`;
+        
+        // 添加当前生效的设备列表
+        if (firewallStatus?.devices && firewallStatus.devices.length > 0) {
+            statusText += '\n\n当前生效设备:';
+            firewallStatus.devices.forEach((device, index) => {
+                statusText += `\n${index + 1}. ${device.name} (${device.address}) [${device.type}]`;
+            });
+        } else if (firewallStatus?.blocked_count > 0) {
+            statusText += `\n\n当前生效设备: ${firewallStatus.blocked_count}个（请查看规则日志）`;
+        } else {
+            statusText += '\n\n当前生效设备: 无';
+        }
+        
+        statusContent.textContent = statusText;
+    })
+    .catch(error => {
+        console.error('获取系统状态失败:', error);
+        statusContent.textContent = '获取系统状态失败，请刷新页面重试\n错误信息: ' + error.message;
+    });
+}
+
+function extractActiveDevicesFromLogs() {
+    const activeDevices = [];
+    const seenDevices = new Set();
+    
+    // 从最新的日志开始向前搜索
+    for (let i = currentLogs.length - 1; i >= 0; i--) {
+        const log = currentLogs[i];
+        
+        // 匹配成功添加
+        const addMatch = log.match(/(成功添加(MAC|IP)到阻止列表): ([^ ]+)/);
+        if (addMatch) {
+            const deviceTarget = addMatch[3];
+            
+            // 去重检查
+            if (seenDevices.has(deviceTarget)) {
+                continue;
+            }
+            seenDevices.add(deviceTarget);
+            
+            // 向前查找规则名称（最多向前查10行）
+            let ruleName = "未知规则";
+            for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
+                const prevLog = currentLogs[j];
+                const ruleMatch = prevLog.match(/解析规则 \d+: name='([^']+)', target='([^']+)'/);
+                if (ruleMatch) {
+                    const matchedTarget = ruleMatch[2];
+                    // 检查目标是否匹配（不区分大小写）
+                    if (matchedTarget.toLowerCase() === deviceTarget.toLowerCase()) {
+                        ruleName = ruleMatch[1];
+                        break;
+                    }
+                }
+            }
+            
+            activeDevices.unshift({
+                name: ruleName,
+                target: deviceTarget
+            });
+            
+            // 最多显示10个设备
+            if (activeDevices.length >= 10) {
+                break;
+            }
+        }
+    }
+    
+    return activeDevices.reverse();
+}
+
+// ========== 辅助功能 ==========
+function toggleFullscreen() {
+    const logElement = document.getElementById('log-content');
+    if (logElement.style.height === '80vh') {
+        logElement.style.height = '500px';
+    } else {
+        logElement.style.height = '80vh';
+    }
+}
+
+function scrollToBottom() {
+    const logElement = document.getElementById('log-content');
+    logElement.scrollTop = logElement.scrollHeight;
+}
+
+function scrollToTop() {
+    const logElement = document.getElementById('log-content');
+    logElement.scrollTop = 0;
+}
+
+function changeMaxLines() {
+    const select = document.getElementById('log-lines');
+    const newMaxLines = parseInt(select.value);
+    
+    if (newMaxLines !== maxLines) {
+        maxLines = newMaxLines;
+        
+        // 保存配置
+        saveConfig({
+            log_max_lines: select.value
+        }).then(() => {
+            refreshLogs();
+        });
+    }
+}
+
+function changeRefreshInterval() {
+    const select = document.getElementById('refresh-interval');
+    const intervalSeconds = parseInt(select.value);
+    const newIntervalMs = intervalSeconds * 1000;
+    
+    // 更新显示
+    const refreshDisplay = document.getElementById('refresh-display');
+    if (refreshDisplay) {
+        refreshDisplay.textContent = intervalSeconds === 0 ? '手动' : intervalSeconds;
+    }
+    
+    // 保存配置
+    saveConfig({
+        log_auto_refresh: select.value
+    }).then(() => {
+        // 更新间隔
+        autoRefreshIntervalMs = newIntervalMs;
+        
+        // 重新配置自动刷新
+        if (autoRefreshEnabled && intervalSeconds > 0) {
+            startAutoRefresh();
+        } else {
+            // 如果选择0或不刷新，停止自动刷新
+            stopAutoRefresh();
+            if (intervalSeconds === 0) {
+                const btn = document.getElementById('auto-refresh-btn');
+                if (btn) {
+                    btn.innerHTML = '<i class="icon icon-clock"></i> 自动刷新已禁用';
+                    btn.style.backgroundColor = '#6c757d';
+                }
+            }
+        }
+    });
+}
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    
+    if (autoRefreshEnabled && autoRefreshIntervalMs > 0) {
+        autoRefreshInterval = setInterval(refreshLogs, autoRefreshIntervalMs);
+        
+        const btn = document.getElementById('auto-refresh-btn');
+        if (btn) {
+            const seconds = autoRefreshIntervalMs / 1000;
+            btn.innerHTML = `<i class="icon icon-clock"></i> 暂停刷新 (${seconds}秒)`;
+            btn.style.backgroundColor = '';
+            btn.title = `自动刷新间隔: ${seconds}秒`;
+        }
+        
+        console.log(`自动刷新已启动，间隔: ${autoRefreshIntervalMs}ms`);
+    }
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+        console.log('自动刷新已停止');
+    }
+}
+
+function toggleAutoRefresh() {
+    autoRefreshEnabled = !autoRefreshEnabled;
+    const btn = document.getElementById('auto-refresh-btn');
+    
+    if (autoRefreshEnabled && autoRefreshIntervalMs > 0) {
+        startAutoRefresh();
+        const seconds = autoRefreshIntervalMs / 1000;
+        btn.innerHTML = `<i class="icon icon-clock"></i> 暂停刷新 (${seconds}秒)`;
+        btn.style.backgroundColor = '';
+    } else {
+        stopAutoRefresh();
+        btn.innerHTML = '<i class="icon icon-clock"></i> 启动刷新';
+        btn.style.backgroundColor = '#dc3545';
+    }
+}
+
+// ========== 移动端适配 ==========
+function detectMobile() {
+    const container = document.getElementById('log-description-container');
+    isMobile = window.innerWidth <= 768;
+    
+    if (container) {
+        if (isMobile) {
+            // 移动端竖排显示
+            container.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 15px; width: 100%;">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
+                        <h4 style="margin-top: 0; color: #007bff;"><i class="icon icon-info"></i> 日志等级说明</h4>
+                        <div style="font-size: 12px;">
+                            <p><span style="color: #9cdcfe;">■ 信息</span> - 普通操作记录</p>
+                            <p><span style="color: #6a9955;">✅ 成功</span> - 操作成功完成</p>
+                            <p><span style="color: #ffcc00;">⚠ 警告</span> - 需要注意的情况</p>
+                            <p><span style="color: #f44747;">❌ 错误</span> - 错误和失败信息</p>
+                            <p><span style="color: #ce9178;">⏰ 时间</span> - 规则时间相关</p>
+                            <p><span style="color: #b5cea8;">🔕 禁用</span> - 规则被禁用</p>
+                            <p><span style="color: #4ec9b0;">📊 统计</span> - 规则统计信息</p>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
+                        <h4 style="margin-top: 0; color: #28a745;"><i class="icon icon-settings"></i> 操作说明</h4>
+                        <div style="font-size: 12px;">
+                            <p><strong>刷新日志</strong> - 重新加载最新日志</p>
+                            <p><strong>清空日志</strong> - 清空当前日志</p>
+                            <p><strong>下载日志</strong> - 保存日志到本地文件</p>
+                            <p><strong>系统状态</strong> - 查看当前系统运行状态</p>
+                            <p><strong>双击日志区</strong> - 切换全屏显示模式</p>
+                            <p><strong>过滤功能</strong> - 按类型筛选日志</p>
+                            <p><strong>滚动按钮</strong> - 快速跳转到顶部/底部</p>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107;">
+                        <h4 style="margin-top: 0; color: #ffc107;"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                        <div style="font-size: 12px;">
+                            <p>• 日志文件: <code>/var/log/znetcontrol.log</code></p>
+                            <p>• 自动刷新: 可配置间隔时间</p>
+                            <p>• 最大显示: 可配置显示行数</p>
+                            <p>• 键盘快捷键: Ctrl+R 刷新, Ctrl+D 下载</p>
+                            <p>• 支持按类型过滤: 信息、成功、警告、错误等</p>
+                            <p>• 日志表情说明:</p>
+                            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;">
+                                <span style="color: #6a9955;">✅ 成功</span>
+                                <span style="color: #ffcc00;">⚠ 警告</span>
+                                <span style="color: #f44747;">❌ 错误</span>
+                                <span style="color: #ce9178;">⏰ 时间</span>
+                                <span style="color: #b5cea8;">🔕 禁用</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            // PC端横排显示
+            container.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; width: 100%;">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
+                        <h4 style="margin-top: 0; color: #007bff;"><i class="icon icon-info"></i> 日志等级说明</h4>
+                        <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #9cdcfe; margin-right: 5px; flex-shrink: 0;">■</span>
+                                <strong style="margin-right: 5px;">信息</strong> - 普通操作记录
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #6a9955; margin-right: 5px; flex-shrink: 0;">✅</span>
+                                <strong style="margin-right: 5px;">成功</strong> - 操作成功完成
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #ffcc00; margin-right: 5px; flex-shrink: 0;">⚠</span>
+                                <strong style="margin-right: 5px;">警告</strong> - 需要注意的情况
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #f44747; margin-right: 5px; flex-shrink: 0;">❌</span>
+                                <strong style="margin-right: 5px;">错误</strong> - 错误和失败信息
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #ce9178; margin-right: 5px; flex-shrink: 0;">⏰</span>
+                                <strong style="margin-right: 5px;">时间</strong> - 规则时间相关
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #b5cea8; margin-right: 5px; flex-shrink: 0;">🔕</span>
+                                <strong style="margin-right: 5px;">禁用</strong> - 规则被禁用
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #4ec9b0; margin-right: 5px; flex-shrink: 0;">📊</span>
+                                <strong style="margin-right: 5px;">统计</strong> - 规则统计信息
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
+                        <h4 style="margin-top: 0; color: #28a745;"><i class="icon icon-settings"></i> 操作说明</h4>
+                        <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
+                            <p style="margin: 0;"><strong>刷新日志</strong> - 重新加载最新日志</p>
+                            <p style="margin: 0;"><strong>清空日志</strong> - 清空当前日志</p>
+                            <p style="margin: 0;"><strong>下载日志</strong> - 保存日志到本地文件</p>
+                            <p style="margin: 0;"><strong>系统状态</strong> - 查看当前系统运行状态</p>
+                            <p style="margin: 0;"><strong>双击日志区</strong> - 切换全屏显示模式</p>
+                            <p style="margin: 0;"><strong>过滤功能</strong> - 按类型筛选日志</p>
+                            <p style="margin: 0;"><strong>滚动按钮</strong> - 快速跳转到顶部/底部</p>
+                        </div>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107;">
+                        <h4 style="margin-top: 0; color: #ffc107;"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                        <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
+                            <p style="margin: 0;">• 日志文件: <code>/var/log/znetcontrol.log</code></p>
+                            <p style="margin: 0;">• 自动刷新: 可配置间隔时间</p>
+                            <p style="margin: 0;">• 最大显示: 可配置显示行数</p>
+                            <p style="margin: 0;">• 键盘快捷键: Ctrl+R 刷新, Ctrl+D 下载</p>
+                            <p style="margin: 0;">• 支持按类型过滤: 信息、成功、警告、错误等</p>
+                            <div style="margin-top: 5px;">
+                                <p style="margin: 0 0 3px 0; font-weight: bold;">日志表情说明:</p>
+                                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                    <span style="color: #6a9955;">✅ 成功</span>
+                                    <span style="color: #ffcc00;">⚠ 警告</span>
+                                    <span style="color: #f44747;">❌ 错误</span>
+                                    <span style="color: #ce9178;">⏰ 时间</span>
+                                    <span style="color: #b5cea8;">🔕 禁用</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
+    
+    const floatButtons = document.getElementById('mobile-float-buttons');
+    const logContent = document.getElementById('log-content');
+    
+    if (isMobile) {
+        if (floatButtons) floatButtons.style.display = 'block';
+        if (logContent) logContent.style.height = 'calc(100vh - 350px)';
+    } else {
+        if (floatButtons) floatButtons.style.display = 'none';
+        if (logContent) logContent.style.height = '500px';
+    }
+}
+
+// ========== 初始化 ==========
+window.addEventListener('load', function() {
+    // 加载配置
+    loadConfig().then(config => {
+        console.log('配置加载完成:', config);
+        
+        // 初始化日志说明
+        detectMobile();
+        
+        // 加载日志
+        refreshLogs();
+        
+        // 启动自动刷新
+        if (config.log_auto_refresh && config.log_auto_refresh !== '0') {
+            autoRefreshIntervalMs = parseInt(config.log_auto_refresh) * 1000;
+            startAutoRefresh();
+        } else {
+            // 不自动刷新
+            autoRefreshEnabled = false;
+            const btn = document.getElementById('auto-refresh-btn');
+            if (btn) {
+                btn.innerHTML = '<i class="icon icon-clock"></i> 自动刷新已禁用';
+                btn.style.backgroundColor = '#6c757d';
+            }
+        }
+    });
+    
+    // 监听窗口大小变化
+    window.addEventListener('resize', detectMobile);
+    
+    // 双击全屏
+    const logElement = document.getElementById('log-content');
+    if (logElement) {
+        logElement.addEventListener('dblclick', toggleFullscreen);
+    }
+    
+    // 键盘快捷键
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            refreshLogs();
+        }
+        if (e.ctrlKey && e.key === 'd') {
+            e.preventDefault();
+            downloadLogs();
+        }
+        if (e.key === 'Escape') {
+            document.getElementById('system-status').style.display = 'none';
+        }
+    });
+});
+
+// 清理
+window.addEventListener('beforeunload', function() {
+    stopAutoRefresh();
+});
+
+// 添加CSS样式
+const style = document.createElement('style');
+style.textContent = `
+/* 覆盖cbi-section的宽度限制 */
+.cbi-section .cbi-value-field {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+/* 确保容器使用全宽 */
+#log-description-container > div {
+    width: 100% !important;
+    box-sizing: border-box;
+}
+
+/* 确保内部内容不溢出 */
+#log-description-container > div > div {
+    flex: 1;
+    min-width: 0;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* 日志区域滚动条样式 */
+#log-content::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+#log-content::-webkit-scrollbar-track {
+    background: #2d2d2d;
+    border-radius: 5px;
+}
+#log-content::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 5px;
+}
+#log-content::-webkit-scrollbar-thumb:hover {
+    background: #777;
+}
+
+/* 按钮样式 */
+.cbi-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 13px;
+}
+.cbi-button-action {
+    background-color: #007bff;
+    border-color: #007bff;
+    color: white;
+}
+.cbi-button-reset {
+    background-color: #ffc107;
+    border-color: #ffc107;
+    color: #212529;
+}
+.cbi-button-apply {
+    background-color: #28a745;
+    border-color: #28a745;
+    color: white;
+}
+.cbi-button:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+fieldset.cbi-section {
+    width: 90% !important;
+    max-width: none !important;
+}
+
+.cbi-value {
+    width: 90% !important;
+}
+
+.cbi-value-field {
+    width: 90% !important;
+    max-width: 100% !important;
+    display: block !important;
+}
+
+#log-description-container {
+    width: 90% !important;
+    display: block !important;
+}
+
+/* 选择框样式 */
+select {
+    background-color: white;
+    border: 1px solid #ced4da;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 13px;
+    color: #495057;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    #log-description-container > div {
+        flex-direction: column;
+    }
+    
+    #log-description-container > div > div {
+        width: 100% !important;
+    }
+    
+    .log-toolbar > div:last-child {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .log-toolbar select {
+        width: 100%;
+        margin-bottom: 5px;
+    }
+}
+`;
+document.head.appendChild(style);
+</script>
+<%+footer%>

@@ -1,0 +1,25 @@
+{
+    "admin/control": {
+        "title": "管控",
+        "order": 70,
+        "action": {
+            "type": "firstchild"
+        },
+        "depends": {
+            "acl": ["luci-app-znetcontrol"]
+        }
+    },
+    "admin/control/znetcontrol": {
+        "title": "佐罗上网管控",
+        "order": 10,
+        "action": {
+            "type": "firstchild"
+        },
+        "depends": {
+            "acl": ["luci-app-znetcontrol"],
+            "fs": {
+                "/usr/lib/lua/luci/controller/znetcontrol.lua": "file"
+            }
+        }
+    }
+}
