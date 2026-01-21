@@ -8,18 +8,27 @@ DAEMON="/usr/bin/znetcontrol.sh"
 NAME="znetcontrol"
 DESC="ZNetControl Internet Access Control"
 
+# ========== 修复：彻底清理所有相关进程 ==========
+kill_all_processes() {
+    # 杀死所有znetcontrol相关进程
+    pkill -f "znetcontrol.sh daemon" >/dev/null 2>&1
+    pkill -f "znetcontrol.sh" >/dev/null 2>&1
+    
+    # 等待进程退出
+    sleep 1
+    
+    # 强制杀死残留进程
+    pgrep -f "znetcontrol.sh" | xargs kill -9 >/dev/null 2>&1
+    
+    # 清理PID文件
+    rm -f "$PID_FILE"
+}
+
 start() {
     echo "Starting $DESC..."
     
-    # 检查是否已运行
-    if [ -f "$PID_FILE" ]; then
-        local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            echo "$DESC is already running (PID: $pid)"
-            return 0
-        fi
-        rm -f "$PID_FILE"
-    fi
+    # 先彻底清理旧进程
+    kill_all_processes
     
     # 启动服务
     $DAEMON daemon
@@ -37,17 +46,9 @@ start() {
 stop() {
     echo "Stopping $DESC..."
     
-    if [ -f "$PID_FILE" ]; then
-        local pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$pid" ]; then
-            $DAEMON stop
-            echo "Stopped $DESC"
-            return 0
-        fi
-    fi
+    # 彻底清理所有进程
+    kill_all_processes
     
-    # 如果没有PID文件，尝试直接停止
-    $DAEMON stop
     echo "Stopped $DESC"
     return 0
 }
@@ -60,9 +61,15 @@ restart() {
 }
 
 status() {
+    # 修复：强制刷新PID文件后再调用status
+    local running_pid=$(pgrep -f "znetcontrol.sh daemon" | head -1)
+    if [ -n "$running_pid" ]; then
+        echo "$running_pid" > "$PID_FILE"
+    fi
     $DAEMON status
     return $?
 }
+
 
 reload() {
     echo "Reloading $DESC rules..."
@@ -99,3 +106,4 @@ case "$1" in
 esac
 
 exit 0
+

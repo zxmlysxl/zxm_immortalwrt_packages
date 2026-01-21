@@ -90,8 +90,8 @@ function enabled.write(self, section, value)
     uci:set("znetcontrol", section, "enabled", save_val)
 end
 
--- 生效星期
-days = s:option(ListValue, "days", translate("生效星期"))
+-- ========== 新增：生效星期增加自定义项 ==========
+days = s:option(Value, "days", translate("生效星期"))
 days:value("", translate("每天"))
 days:value("1,2,3,4,5", translate("工作日（周一至周五）"))
 days:value("6,7", translate("周末（周六至周日）"))
@@ -102,7 +102,62 @@ days:value("4", translate("星期四"))
 days:value("5", translate("星期五"))
 days:value("6", translate("星期六"))
 days:value("7", translate("星期日"))
+days.placeholder = translate("自定义（如：1-3 或 1,2,3）")
 days.rmempty = true
+
+-- 自定义星期验证
+function days.validate(self, value, section)
+    if value == nil or value == "" then
+        return value
+    end
+    
+    -- 移除空格
+    value = value:gsub("%s+", "")
+    
+    -- 检查是否是预设值
+    local preset_values = {
+        "", "1,2,3,4,5", "6,7", "1", "2", "3", "4", "5", "6", "7"
+    }
+    for _, v in ipairs(preset_values) do
+        if value == v then
+            return value
+        end
+    end
+    
+    -- 验证自定义格式
+    -- 格式1：范围 1-3
+    if value:match("^%d+-%d+$") then
+        local start_day, end_day = value:match("^(%d+)-(%d+)$")
+        start_day = tonumber(start_day)
+        end_day = tonumber(end_day)
+        
+        if start_day and end_day and start_day >= 1 and start_day <= 7 and end_day >= 1 and end_day <= 7 and start_day <= end_day then
+            return value
+        else
+            return nil, translate("自定义星期范围无效（请输入1-7之间的数字，如：1-3）")
+        end
+    end
+    
+    -- 格式2：逗号分隔 1,2,3
+    if value:match("^%d+(,%d+)*$") then
+        local valid = true
+        for day in value:gmatch("%d+") do
+            day = tonumber(day)
+            if not day or day < 1 or day > 7 then
+                valid = false
+                break
+            end
+        end
+        if valid then
+            return value
+        else
+            return nil, translate("自定义星期列表无效（请输入1-7之间的数字，如：1,2,3）")
+        end
+    end
+    
+    -- 无效格式
+    return nil, translate("自定义星期格式无效（支持：1-3 或 1,2,3 两种写法）")
+end
 
 -- 开始时间
 start_time = s:option(Value, "start_time", translate("开始时间"))
@@ -219,44 +274,5 @@ function s.parse(self, ...)
     return result
 end
 
--- 全局设置部分
-s2 = m:section(TypedSection, "global", translate("全局设置"))
-s2.anonymous = true
-s2.addremove = false
-
--- 服务启用
-enabled = s2:option(Flag, "enabled", translate("启用服务"))
-enabled.default = true
-enabled.rmempty = false
-
--- 日志自动刷新间隔
-refresh_interval = s2:option(ListValue, "log_auto_refresh", translate("日志自动刷新间隔"))
-refresh_interval:value("5", translate("5秒"))
-refresh_interval:value("10", translate("10秒"))
-refresh_interval:value("30", translate("30秒"))
-refresh_interval:value("60", translate("60秒"))
-refresh_interval:value("120", translate("2分钟"))
-refresh_interval:value("300", translate("5分钟"))
-refresh_interval:value("0", translate("不自动刷新"))
-refresh_interval.default = "30"
-refresh_interval.rmempty = false
-
--- 日志最大显示行数
-log_max_lines = s2:option(ListValue, "log_max_lines", translate("日志最大显示行数"))
-log_max_lines:value("100", translate("100行"))
-log_max_lines:value("500", translate("500行"))
-log_max_lines:value("1000", translate("1000行"))
-log_max_lines:value("2000", translate("2000行"))
-log_max_lines:value("5000", translate("5000行"))
-log_max_lines.default = "1000"
-log_max_lines.rmempty = false
-
--- 日志备份设置
-log_backup = s2:option(ListValue, "log_backup_enabled", translate("清空日志时备份"))
-log_backup:value("0", translate("不备份（直接清空）"))
-log_backup:value("1", translate("备份（保留7天）"))
-log_backup.default = "0"
-log_backup.rmempty = false
-log_backup.description = translate("启用备份会保留最近7天的日志文件，占用更多存储空间")
-
 return m
+

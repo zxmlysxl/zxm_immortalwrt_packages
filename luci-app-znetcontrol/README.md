@@ -13,3 +13,7 @@
 ## 安装
 ```bash
 opkg install luci-app-znetcontrol
+
+## 升级日志
+2026-01-21
+	V1.5.0：基本功能和LUCI界面定稿；

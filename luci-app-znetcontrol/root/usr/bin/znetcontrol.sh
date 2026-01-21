@@ -38,12 +38,13 @@ get_version() {
     echo "$version"
 }
 
+# ========== 修改1：移除日志中的版本号 ==========
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    local version=$(get_version)
-    
-    echo "$timestamp [$version] - $*" >> "$LOG_FILE"
-    logger -t "znetcontrol[$version]" "$*"
+    # 移除版本号：删除 [$(get_version)] 这部分
+    echo "$timestamp - $*" >> "$LOG_FILE"
+    # logger日志也移除版本号后缀
+    logger -t "znetcontrol" "$*"
 }
 
 # 确保目录存在
@@ -462,8 +463,9 @@ daemon_start() {
     
     # 启动守护进程循环
     (
-        echo $$ > "$PID_FILE"
-        log "ZNetControl v$version 守护进程已启动 (PID: $$)"
+        local current_pid=$$  # 获取当前进程PID
+        echo $current_pid > "$PID_FILE"  # 强制写入PID文件
+        log "ZNetControl v$version 守护进程已启动 (PID: $current_pid)"
         log "监控模式：每分钟检查规则时间"
         
         trap "log '收到停止信号'; cleanup; exit 0" INT TERM
@@ -492,7 +494,18 @@ daemon_start() {
             
             # 检查1：分钟变化（每分钟检查一次）
             if [ "$current_hour_minute" != "$last_minute" ]; then
-                log "时间变化：$(date +"%H:%M") 星期$current_day"
+                # 转换数字星期为中文星期
+                case $current_day in
+                    1) week_cn="一" ;;
+                    2) week_cn="二" ;;
+                    3) week_cn="三" ;;
+                    4) week_cn="四" ;;
+                    5) week_cn="五" ;;
+                    6) week_cn="六" ;;
+                    7) week_cn="日" ;;
+                    *) week_cn="$current_day" ;;
+                esac
+                log "时间变化：$(date +"%H:%M") 星期$week_cn"
                 need_reload=true
                 last_minute="$current_hour_minute"
             fi
@@ -576,21 +589,42 @@ restart_service() {
 # 显示状态
 show_status() {
     local version=$(get_version)
-    
-    echo "ZNetControl v$version 状态检查"
+    echo "=================================="
+    echo "  佐罗上网管控 v$version 状态检查"
     echo "=================================="
     
+    # ========== 移除运行时间相关逻辑，仅保留状态和PID ==========
+    local pid=""
+    local is_running=0
+    
+    # 1. 先从PID文件读取
     if [ -f "$PID_FILE" ]; then
-        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        pid=$(cat "$PID_FILE" 2>/dev/null | tr -d ' ')
+        # 验证PID是否有效
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            echo "状态: 运行中"
-            echo "PID: $pid"
-            echo "版本: v$version"
-            echo "运行时间: $(ps -o etime= -p $pid 2>/dev/null | xargs)"
+            is_running=1
         else
-            echo "状态: 进程文件存在但进程未运行"
+            # PID文件无效，清空
             rm -f "$PID_FILE"
+            pid=""
         fi
+    fi
+    
+    # 2. PID文件无效，主动查找进程
+    if [ $is_running -eq 0 ]; then
+        pid=$(pgrep -f "znetcontrol.sh daemon" | head -1 | tr -d ' ')
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            is_running=1
+            # 更新PID文件
+            echo "$pid" > "$PID_FILE"
+        fi
+    fi
+    
+    # 3. 输出状态（移除运行时间）
+    if [ $is_running -eq 1 ]; then
+        echo "状态: 运行中"
+        echo "PID: $pid"
+        echo "版本: v$version"
     else
         echo "状态: 未运行"
     fi
@@ -705,3 +739,4 @@ case "$1" in
 esac
 
 exit 0
+

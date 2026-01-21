@@ -59,12 +59,12 @@ define Package/luci-app-znetcontrol/install
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/znetcontrol $(1)/etc/config/znetcontrol
 	
-    	# 创建版本标记文件
-    	$(INSTALL_DIR) $(1)/etc
-    	echo "package_version=$(PKG_VERSION)" > $(1)/etc/znetcontrol.version
-    	echo "build_date=$(PKG_RELEASE)" >> $(1)/etc/znetcontrol.version
-    	echo "maintainer=$(PKG_MAINTAINER)" >> $(1)/etc/znetcontrol.version
-    
+	# 创建版本标记文件
+	$(INSTALL_DIR) $(1)/etc
+	echo "package_version=$(PKG_VERSION)" > $(1)/etc/znetcontrol.version
+	echo "build_date=$(PKG_RELEASE)" >> $(1)/etc/znetcontrol.version
+	echo "maintainer=$(PKG_MAINTAINER)" >> $(1)/etc/znetcontrol.version
+	
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./root/etc/init.d/znetcontrol $(1)/etc/init.d/znetcontrol
 	
