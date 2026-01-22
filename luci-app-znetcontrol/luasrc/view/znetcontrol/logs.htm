@@ -294,6 +294,7 @@ function refreshLogs() {
             return response.json();
         })
         .then(logs => {
+            // ========== 修复：正确处理空数组 ==========
             if (!Array.isArray(logs)) {
                 throw new Error('返回数据格式错误');
             }
@@ -301,6 +302,7 @@ function refreshLogs() {
             currentLogs = logs; // 保存日志用于过滤
             
             if (logs.length === 0) {
+                // 修复：空日志时显示友好提示，而非错误
                 logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">暂无日志记录</div>';
                 lineCountElement.textContent = '0';
             } else {
@@ -338,6 +340,7 @@ function refreshLogs() {
             lineCountElement.textContent = '0';
         });
 }
+
 
 function filterByLevel(logs, level) {
     return logs.filter(log => {
@@ -384,6 +387,7 @@ function filterLogs() {
     const lineCountElement = document.getElementById('line-count');
     
     if (currentLogs.length === 0) {
+        // 修复：空日志时显示友好提示
         logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">没有日志数据</div>';
         lineCountElement.textContent = '0';
         return;
@@ -409,6 +413,7 @@ function filterLogs() {
         lineCountElement.textContent = filtered.length;
     }
 }
+
 
 function formatLogLine(log) {
     if (!log) return '';
@@ -539,13 +544,14 @@ function showSystemStatus() {
 │           佐罗上网管控系统状态                 │
 ├────────────────────────────────────────────┤
 │    控制模式: IP/MAC地址时间控制              │
-│    版本: ${status?.version || '1.1.1'} | 作者: zuoxm  │
+│    版本: ${status?.version || '1.5.0'} | 作者: zuoxm  │
 ├────────────────────────────────────────────┤
 │ 当前时间: ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', {hour12: false})} │
 │ 星期: ${weekday}                           │
 ├────────────────────────────────────────────┤
 │ 服务状态: ${status?.running ? '✅ 运行中' : '❌ 已停止'} │
 │ 运行时间: ${status?.uptime || '--'}        │
+│ 进程PID: ${status?.pid || '--'}            │
 ├────────────────────────────────────────────┤
 │ 规则统计:                                  │
 │  总规则数: ${status?.total_rules || 0}     │
@@ -1069,4 +1075,5 @@ select {
 document.head.appendChild(style);
 </script>
 <%+footer%>
+
 

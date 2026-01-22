@@ -7,11 +7,11 @@ LOG_FILE="/var/log/znetcontrol.log"
 PID_FILE="/var/run/znetcontrol.pid"
 CONFIG_FILE="/etc/config/znetcontrol"
 
-# 获取版本号
+# 获取版本号：只从版本文件读取
 get_version() {
-    local version="1.1.1"  # 默认版本
+    local version="unknown"  # 默认版本
     
-    # 从版本文件读取
+    # 只从版本文件读取（优先级最高）
     if [ -f "/etc/znetcontrol.version" ]; then
         local ver_line=$(grep "^package_version=" /etc/znetcontrol.version 2>/dev/null)
         if [ -n "$ver_line" ]; then
@@ -19,26 +19,10 @@ get_version() {
         fi
     fi
     
-    # 从opkg信息读取
-    if [ -f "/usr/lib/opkg/info/luci-app-znetcontrol.control" ]; then
-        local ver_line=$(grep "^Version:" /usr/lib/opkg/info/luci-app-znetcontrol.control 2>/dev/null)
-        if [ -n "$ver_line" ]; then
-            version=$(echo "$ver_line" | cut -d: -f2 | xargs)
-        fi
-    fi
-    
-    # 从uci配置读取
-    if [ -f "/etc/config/znetcontrol" ]; then
-        local ver_line=$(grep -E "^\s*option\s+version\s+" "$CONFIG_FILE" 2>/dev/null | head -1)
-        if [ -n "$ver_line" ]; then
-            version=$(echo "$ver_line" | awk '{print $3}' | sed "s/'//g; s/\"//g")
-        fi
-    fi
-    
     echo "$version"
 }
 
-# ========== 修改1：移除日志中的版本号 ==========
+# 移除日志中的版本号
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     # 移除版本号：删除 [$(get_version)] 这部分
@@ -593,7 +577,7 @@ show_status() {
     echo "  佐罗上网管控 v$version 状态检查"
     echo "=================================="
     
-    # ========== 移除运行时间相关逻辑，仅保留状态和PID ==========
+    # 移除运行时间相关逻辑，仅保留状态和PID
     local pid=""
     local is_running=0
     
@@ -620,7 +604,7 @@ show_status() {
         fi
     fi
     
-    # 3. 输出状态（移除运行时间）
+    # 3. 输出状态
     if [ $is_running -eq 1 ]; then
         echo "状态: 运行中"
         echo "PID: $pid"

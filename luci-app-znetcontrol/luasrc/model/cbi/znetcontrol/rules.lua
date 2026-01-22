@@ -1,23 +1,29 @@
 local uci = require("luci.model.uci").cursor()
 local sys = require("luci.sys")
+local http = require("luci.http")
 
 m = Map("znetcontrol", translate("上网管控规则"), 
     translate("为设备设置上网时间管控规则，支持按IP地址或MAC地址、时间段和日期进行精确控制") .. 
     "<br><span style='color: #ff6b6b;'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>")
 
-m.on_after_save = function(self)
-    -- 确保配置提交
+-- ========== 修复：立即应用配置 ==========
+-- 覆盖LuCI的默认apply行为
+function m.on_after_apply(self)
+    -- 提交配置到文件
     uci:commit("znetcontrol")
     
-    -- 重新加载规则
-    sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
+    -- 立即重新加载规则
+    local result = sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
     
-    return true
+    -- 记录日志
+    sys.call('logger -t znetcontrol "规则已保存并立即应用"')
+    
+    -- 不执行默认的重定向，让LuCI显示成功消息
+    return false
 end
 
-m.on_after_commit = function(self)
-    luci.http.redirect(luci.dispatcher.build_url("admin/control/znetcontrol/rules"))
-end
+-- ========== 移除原有的commit逻辑，使用LuCI标准机制 ==========
+-- 删除 has_changes 相关代码，使用LuCI的标准机制
 
 s = m:section(TypedSection, "rule", translate("规则列表"))
 s.template = "cbi/tblsection"
@@ -73,24 +79,7 @@ enabled = s:option(Flag, "enabled", translate("启用规则"))
 enabled.default = true
 enabled.rmempty = false
 
-function enabled.cfgvalue(self, section)
-    local val = uci:get("znetcontrol", section, "enabled")
-    if val == "1" or val == "true" or val == nil then
-        return true
-    else
-        return false
-    end
-end
-
-function enabled.write(self, section, value)
-    local save_val = "0"
-    if value == true or value == "1" or value == "true" then
-        save_val = "1"
-    end
-    uci:set("znetcontrol", section, "enabled", save_val)
-end
-
--- ========== 新增：生效星期增加自定义项 ==========
+-- 生效星期
 days = s:option(Value, "days", translate("生效星期"))
 days:value("", translate("每天"))
 days:value("1,2,3,4,5", translate("工作日（周一至周五）"))
@@ -229,50 +218,21 @@ function end_time.validate(self, value, section)
     return formatted_hour .. ":" .. formatted_minute
 end
 
--- 处理新建规则
+-- ========== 处理新建规则 ==========
 function s.create(self, section)
     local section_id = TypedSection.create(self, section)
     
-    -- 设置默认值，但不设置目标地址（让用户自己填写）
+    -- 设置默认值
     uci:set("znetcontrol", section_id, "enabled", "1")
     uci:set("znetcontrol", section_id, "name", "新规则")
-    -- 不要设置默认的目标地址
-    
-    uci:commit("znetcontrol")
     
     return section_id
 end
 
--- 处理删除规则
+-- ========== 处理删除规则 ==========
 function s.remove(self, section)
-    -- 先获取当前规则信息
-    local target_value = uci:get("znetcontrol", section, "target")
-    
     TypedSection.remove(self, section)
-    uci:commit("znetcontrol")
-    
-    -- 如果被删除的规则有目标地址，重新加载规则
-    if target_value and target_value ~= "" then
-        sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
-    end
-    
     return true
 end
 
--- 自定义保存逻辑
-function s.parse(self, ...)
-    local result = TypedSection.parse(self, ...)
-    
-    if result then
-        -- 保存成功后提交
-        uci:commit("znetcontrol")
-        
-        -- 重新加载规则（只在有实际更改时）
-        sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
-    end
-    
-    return result
-end
-
 return m
-

@@ -10,4 +10,16 @@ touch /var/log/znetcontrol.log 2>/dev/null
 # 确保配置目录存在
 mkdir -p /etc/config 2>/dev/null
 
+
+# 启用服务开机自启（如果init.d脚本存在）
+if [ -x "/etc/init.d/znetcontrol" ]; then
+    # 启用开机自启
+    /etc/init.d/znetcontrol enable >/dev/null 2>&1
+    
+    # 如果服务没有运行，启动它
+    if ! /etc/init.d/znetcontrol status >/dev/null 2>&1; then
+        /etc/init.d/znetcontrol start >/dev/null 2>&1
+    fi
+fi
+
 exit 0

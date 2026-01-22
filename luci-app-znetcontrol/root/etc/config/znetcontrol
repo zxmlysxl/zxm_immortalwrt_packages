@@ -5,8 +5,6 @@ config global 'settings'
 	option log_auto_refresh '30'        # 日志自动刷新间隔（秒）
         option log_max_lines '1000'         # 最大显示行数
         option log_backup_enabled '0'       # 日志备份开关（0=关闭，1=开启）
-        option version '1.1.1'              # 动态更新
-        option build_date '20260119'        # 构建日期
 
 # 示例规则 - 支持MAC或IP
 # config rule 'example_mac'

@@ -173,18 +173,32 @@ function refreshStatus(force = false) {
     
     // 使用fetch但设置超时和重试
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_status")%>', {
-        credentials: 'same-origin',
+        method: 'GET',
+        credentials: 'same-origin',  // 携带cookie认证
         headers: {
+            'Accept': 'application/json',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
-            'Expires': '0'
+            'Expires': '0',
+            'X-Requested-With': 'XMLHttpRequest'  // 标记为AJAX请求
         }
     })
     .then(response => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
+        // 检查响应类型
+        const contentType = response.headers.get('content-type');
+        
+        if (contentType && contentType.includes('application/json')) {
+            return response.json();
+        } else if (response.status === 401 || response.status === 403) {
+            // 认证失败，重新登录
+            throw new Error('认证失败，请刷新页面重新登录');
+        } else {
+            // 响应不是JSON，尝试解析HTML错误
+            return response.text().then(text => {
+                console.error('API返回非JSON响应:', text.substring(0, 200));
+                throw new Error('API返回格式错误');
+            });
         }
-        return response.json();
     })
     .then(data => {
         updateStatusDisplay(data);
@@ -195,33 +209,58 @@ function refreshStatus(force = false) {
         document.getElementById('service-status').textContent = '获取失败';
         document.getElementById('service-status').className = 'label error';
         document.getElementById('service-pid').textContent = '--';
-        // 3秒后重试
-        setTimeout(refreshStatus, 3000);
+        
+        // 如果是认证错误，提示重新登录
+        if (error.message.includes('认证失败')) {
+            alert('登录已过期，请刷新页面重新登录');
+        }
     });
 }
 
 // 修复PID显示逻辑
 function updateStatusDisplay(data) {
+    console.log('updateStatusDisplay接收到数据:', data);
+    
     const statusEl = document.getElementById('service-status');
-    if (data.running) {
-        statusEl.textContent = '<%:运行中%>';
+    
+    // 多种方式判断running状态
+    let isRunning = false;
+    
+    if (typeof data.running === 'boolean') {
+        isRunning = data.running;
+    } else if (typeof data.running === 'string') {
+        isRunning = data.running === 'true' || data.running === '1';
+    } else if (typeof data.running === 'number') {
+        isRunning = data.running === 1;
+    }
+    
+    console.log('最终判断的running状态:', isRunning);
+    
+    if (isRunning) {
+        console.log('设置为运行中');
+        statusEl.textContent = '运行中';
         statusEl.className = 'label success';
     } else {
-        statusEl.textContent = '<%:已停止%>';
+        console.log('设置为已停止');
+        statusEl.textContent = '已停止';
         statusEl.className = 'label error';
     }
     
-    // 修复PID显示bug：判断PID是否存在且有效
-    if (data.pid && data.pid !== null && data.pid !== "" && !isNaN(data.pid)) {
+    // PID显示
+    if (data.pid && data.pid !== "null" && data.pid !== "undefined") {
         document.getElementById('service-pid').textContent = data.pid;
+        console.log('设置PID为:', data.pid);
     } else {
         document.getElementById('service-pid').textContent = '--';
+        console.log('PID为空，设置为--');
     }
     
-    // 更新规则统计
+    // 规则统计
     document.getElementById('total-rules').textContent = data.total_rules || 0;
     document.getElementById('enabled-rules').textContent = data.enabled_rules || 0;
     document.getElementById('active-rules').textContent = data.active_rules || 0;
+    
+    console.log('显示更新完成');
 }
 
 function restartService() {
@@ -350,3 +389,4 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 </style>
 <%+footer%>
+

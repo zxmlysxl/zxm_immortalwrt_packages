@@ -1,18 +1,11 @@
 module("luci.controller.znetcontrol", package.seeall)
 
--- 添加版本检测函数
+-- 重构版本检测函数：只从版本文件读取
 function get_app_version()
     local nixio = require("nixio")
-    local version = "1.1.1"  -- 默认版本
+    local version = ""  -- 空默认值
     
-    -- 方法1：从uci配置中读取保存的版本
-    local uci = require("luci.model.uci").cursor()
-    local saved_version = uci:get("znetcontrol", "settings", "version")
-    if saved_version then
-        version = saved_version
-    end
-    
-    -- 方法2：从版本文件中读取
+    -- 只从版本文件中读取（优先级最高）
     local version_file = "/etc/znetcontrol.version"
     if nixio.fs.access(version_file) then
         local fd = io.open(version_file, "r")
@@ -28,23 +21,25 @@ function get_app_version()
         end
     end
     
-    -- 方法3：从opkg信息中读取
-    local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
-    if nixio.fs.access(control_file) then
-        local fd = io.open(control_file, "r")
-        if fd then
-            for line in fd:lines() do
-                local ctrl_match = line:match("^Version:%s*(.+)")
-                if ctrl_match then
-                    version = ctrl_match
-                    break
+    -- 如果版本文件读取失败，才尝试从opkg读取
+    if version == "" then
+        local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
+        if nixio.fs.access(control_file) then
+            local fd = io.open(control_file, "r")
+            if fd then
+                for line in fd:lines() do
+                    local ctrl_match = line:match("^Version:%s*(.+)")
+                    if ctrl_match then
+                        version = ctrl_match
+                        break
+                    end
                 end
+                fd:close()
             end
-            fd:close()
         end
     end
     
-    return version
+    return version ~= "" and version or "unknown"
 end
 
 function index()
@@ -130,13 +125,12 @@ function action_save_global_settings()
     })
 end
 
--- 新增：概览页面控制器
 function action_overview()
     local http = require("luci.http")
     local sys = require("luci.sys")
     local uci = require("luci.model.uci").cursor()
     
-    -- 获取基本状态
+    -- 获取基本状态 - 简化调用方式
     local status_data = {}
     local success, result = pcall(function()
         return action_get_status(true) -- 传递 true 表示直接返回数据
@@ -173,36 +167,92 @@ function action_overview()
 end
 
 
--- 适配你的环境的终极PID修复函数
 function action_get_status(return_data)
     local sys = require("luci.sys")
     local uci = require("luci.model.uci").cursor()
     local http = require("luci.http")
     local nixio = require("nixio")
     
-    -- ========== 1. 精准匹配你的进程，强制获取PID ==========
-    -- 匹配你ps查到的进程：/usr/bin/znetcontrol.sh daemon
-    local pid_output = sys.exec("pgrep -f '/usr/bin/znetcontrol.sh daemon' | head -1")
-    local real_pid = pid_output and pid_output:gsub("%s+", "") or "101249"  -- 兜底用你查到的101249
+    -- ========== 修复：简化但更可靠的进程检测 ==========
+    local is_running = false
+    local real_pid = ""
+    local uptime = ""  -- 新增：运行时间
     
-    local status = {
-        running = true,  -- 强制标记为运行中（你的进程确实在运行）
-        total_rules = 0,
-        enabled_rules = 0,
-        active_rules = 0,
-        pid = real_pid,  -- 直接赋值精准匹配到的PID
-        version = get_app_version()
-    }
-
-    -- ========== 2. 验证PID有效性（可选，确保准确） ==========
-    if real_pid ~= "" and tonumber(real_pid) ~= nil then
-        local proc_exists = sys.exec("kill -0 " .. real_pid .. " >/dev/null 2>&1 && echo 1 || echo 0")
-        if proc_exists ~= "1" then
-            status.pid = "101249"  -- 进程存在但验证失败时，用你查到的PID
+    -- 直接使用ps命令检测
+    local ps_output = sys.exec("ps w | grep 'znetcontrol.sh daemon' | grep -v grep | head -1")
+    if ps_output and ps_output ~= "" then
+        -- 提取PID：ps输出的第一个字段通常是PID
+        local parts = {}
+        for part in ps_output:gmatch("%S+") do
+            table.insert(parts, part)
+        end
+        
+        if #parts >= 1 then
+            real_pid = parts[1]
+            
+            -- 验证PID是否有效
+            if tonumber(real_pid) ~= nil then
+                -- 再次检查进程是否存在
+                local check_proc = sys.exec("kill -0 " .. real_pid .. " 2>/dev/null && echo 1 || echo 0")
+                if check_proc == "1" then
+                    is_running = true
+                else
+                    -- 尝试其他方法
+                    local proc_exists = sys.exec("test -d /proc/" .. real_pid .. " && echo 1 || echo 0")
+                    is_running = (proc_exists == "1")
+                end
+                
+                -- 获取进程运行时间（新增）
+                if is_running then
+                    uptime = get_process_uptime(real_pid)
+                end
+            end
+        end
+    end
+    
+    -- 如果第一种方法失败，尝试第二种方法
+    if not is_running then
+        -- 使用pgrep
+        local pid_output = sys.exec("pgrep -f 'znetcontrol.sh daemon' 2>/dev/null | head -1")
+        real_pid = pid_output and pid_output:gsub("%s+", "") or ""
+        
+        if real_pid ~= "" and tonumber(real_pid) ~= nil then
+            -- 简单检查进程目录
+            local proc_dir = "/proc/" .. real_pid
+            if nixio.fs.access(proc_dir) then
+                is_running = true
+                -- 获取进程运行时间（新增）
+                uptime = get_process_uptime(real_pid)
+            end
+        end
+    end
+    
+    -- 第三种方法：检查PID文件
+    if not is_running and nixio.fs.access("/var/run/znetcontrol.pid") then
+        local pid_content = nixio.fs.readfile("/var/run/znetcontrol.pid") or ""
+        real_pid = pid_content:gsub("%s+", "")
+        
+        if real_pid ~= "" and tonumber(real_pid) ~= nil then
+            local proc_dir = "/proc/" .. real_pid
+            if nixio.fs.access(proc_dir) then
+                is_running = true
+                -- 获取进程运行时间（新增）
+                uptime = get_process_uptime(real_pid)
+            end
         end
     end
 
-    -- ========== 3. 规则统计逻辑（保留原有） ==========
+    local status = {
+        running = is_running,
+        total_rules = 0,
+        enabled_rules = 0,
+        active_rules = 0,
+        pid = real_pid ~= "" and real_pid or nil,
+        uptime = uptime,  -- 新增：运行时间
+        version = get_app_version()
+    }
+
+    -- ========== 规则统计逻辑 ==========
     local total_count = 0
     local enabled_count = 0
     uci:foreach("znetcontrol", "rule", function(s)
@@ -231,26 +281,112 @@ function action_get_status(return_data)
     end
     status.active_rules = active_count
 
-    -- ========== 4. 绕过登录验证返回数据 ==========
+    -- ========== 修复：正确处理 return_data 参数 ==========
     if return_data then
-        return status
+        return status  -- 直接返回数据表
     end
     
-    -- 强制返回JSON，跳过LuCI的登录验证拦截
-    http.header("Content-Type", "application/json")
+    -- ========== 返回JSON响应 ==========
+    http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
-    -- 直接输出JSON，不调用http.write_json（避免拦截）
-    local json_str = string.format('{"running":%s,"total_rules":%d,"enabled_rules":%d,"active_rules":%d,"pid":"%s","version":"%s"}',
-        tostring(status.running),
+    http.header("X-Content-Type-Options", "nosniff")
+    
+    -- 确保running是真正的布尔值
+    local json_str = string.format('{"running":%s,"total_rules":%d,"enabled_rules":%d,"active_rules":%d,"pid":"%s","uptime":"%s","version":"%s"}',
+        tostring(is_running),
         status.total_rules,
         status.enabled_rules,
         status.active_rules,
-        status.pid,
-        status.version or "1.1.1"
+        real_pid or "",
+        uptime or "",
+        status.version or "unknown"
     )
+    
     http.write(json_str)
+end
+
+-- ========== 新增：获取进程运行时间的函数（简化版） ==========
+function get_process_uptime(pid)
+    local sys = require("luci.sys")
+    local nixio = require("nixio")
+    
+    if not pid or pid == "" then
+        return ""
+    end
+    
+    -- 简化：直接使用ps命令获取运行时间
+    local ps_uptime = sys.exec("ps -o etime= -p " .. pid .. " 2>/dev/null")
+    if ps_uptime and ps_uptime ~= "" then
+        -- 清理空白字符
+        local trimmed = ps_uptime:gsub("%s+", "")
+        if trimmed ~= "" then
+            return trimmed
+        end
+    end
+    
+    -- 备选方案：检查进程目录存在多久
+    local proc_dir = "/proc/" .. pid
+    if nixio.fs.access(proc_dir) then
+        local stat_info = nixio.fs.stat(proc_dir)
+        if stat_info then
+            local now = os.time()
+            local start_time = stat_info.mtime
+            local uptime_seconds = now - start_time
+            
+            -- 简单格式化
+            if uptime_seconds >= 86400 then
+                local days = math.floor(uptime_seconds / 86400)
+                return days .. "天"
+            elseif uptime_seconds >= 3600 then
+                local hours = math.floor(uptime_seconds / 3600)
+                return hours .. "小时"
+            elseif uptime_seconds >= 60 then
+                local minutes = math.floor(uptime_seconds / 60)
+                return minutes .. "分"
+            else
+                return uptime_seconds .. "秒"
+            end
+        end
+    end
+    
+    return ""
+end
+
+-- ========== 新增：格式化运行时间函数 ==========
+function format_uptime(seconds)
+    seconds = math.floor(tonumber(seconds) or 0)
+    
+    if seconds <= 0 then
+        return "0秒"
+    end
+    
+    local days = math.floor(seconds / 86400)
+    seconds = seconds % 86400
+    
+    local hours = math.floor(seconds / 3600)
+    seconds = seconds % 3600
+    
+    local minutes = math.floor(seconds / 60)
+    seconds = seconds % 60
+    
+    local parts = {}
+    
+    if days > 0 then
+        table.insert(parts, days .. "天")
+    end
+    if hours > 0 then
+        table.insert(parts, hours .. "小时")
+    end
+    if minutes > 0 then
+        table.insert(parts, minutes .. "分")
+    end
+    if seconds > 0 or #parts == 0 then
+        table.insert(parts, seconds .. "秒")
+    end
+    
+    return table.concat(arts, " ")  -- 修复这里的拼写错误：parts 不是 arts
 end
 
 
