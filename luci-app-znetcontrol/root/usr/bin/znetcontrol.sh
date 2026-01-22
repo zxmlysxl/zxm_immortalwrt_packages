@@ -22,6 +22,28 @@ get_version() {
     echo "$version"
 }
 
+# ========== 新增：检查启用规则数量 ==========
+check_enabled_rules() {
+    local enabled_count=0
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        # 使用grep检查配置文件
+        enabled_count=$(grep -c "option enabled '1'" "$CONFIG_FILE" 2>/dev/null || echo 0)
+        
+        # 如果没有找到，尝试其他格式
+        if [ "$enabled_count" -eq 0 ]; then
+            enabled_count=$(grep -c "^[[:space:]]*option enabled[[:space:]]*['\"]1['\"]" "$CONFIG_FILE" 2>/dev/null || echo 0)
+        fi
+        
+        # 检查uci配置（备用方法）
+        if [ "$enabled_count" -eq 0 ] && command -v uci >/dev/null 2>&1; then
+            enabled_count=$(uci show znetcontrol 2>/dev/null | grep -c "\.enabled='1'" || echo 0)
+        fi
+    fi
+    
+    echo "$enabled_count"
+}
+
 # 移除日志中的版本号
 log() {
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
@@ -216,6 +238,16 @@ load_rules() {
         log "配置文件不存在: $CONFIG_FILE"
         return 1
     fi
+    
+    # 检查启用规则数量
+    local enabled_count=$(check_enabled_rules)
+    if [ "$enabled_count" -eq 0 ]; then
+        log "没有启用的规则，停止服务"
+        stop_service
+        return 0
+    fi
+    
+    log "发现 $enabled_count 条启用规则"
     
     # 检查nftables表是否存在，如果不存在则创建
     if ! nft list table $NFT_TABLE >/dev/null 2>&1; then
@@ -419,7 +451,16 @@ load_rules() {
 # 前台启动
 start_foreground() {
     local version=$(get_version)
-    log "启动 ZNetControl v$version (前台模式)"
+    
+    # 检查启用规则数量
+    local enabled_count=$(check_enabled_rules)
+    if [ "$enabled_count" -eq 0 ]; then
+        log "没有启用的规则，停止服务"
+        stop_service
+        return 0
+    fi
+    
+    log "启动 ZNetControl v$version (前台模式)，发现 $enabled_count 条启用规则"
     init_dirs
     setup_firewall
     load_rules
@@ -429,7 +470,16 @@ start_foreground() {
 # 守护进程模式 - 增强版（支持自动时间控制）
 daemon_start() {
     local version=$(get_version)
-    log "ZNetControl v$version 以守护进程模式启动"
+    
+    # 检查启用规则数量
+    local enabled_count=$(check_enabled_rules)
+    if [ "$enabled_count" -eq 0 ]; then
+        log "没有启用的规则，停止服务"
+        stop_service
+        return 0
+    fi
+    
+    log "ZNetControl v$version 以守护进程模式启动，发现 $enabled_count 条启用规则"
     init_dirs
     
     # 检查是否已在运行
@@ -464,6 +514,14 @@ daemon_start() {
         
         # 主监控循环
         while true; do
+            # 检查启用规则数量
+            local current_enabled_count=$(check_enabled_rules)
+            if [ "$current_enabled_count" -eq 0 ]; then
+                log "没有启用的规则，停止守护进程"
+                cleanup
+                exit 0
+            fi
+            
             # 获取当前时间
             local current_hour_minute=$(date +"%H%M")
             local current_day=$(date +%u)
@@ -565,6 +623,16 @@ stop_service() {
 restart_service() {
     local version=$(get_version)
     log "重启 ZNetControl v$version"
+    
+    # 检查启用规则数量
+    local enabled_count=$(check_enabled_rules)
+    if [ "$enabled_count" -eq 0 ]; then
+        log "没有启用的规则，停止服务"
+        stop_service
+        return 0
+    fi
+    
+    log "发现 $enabled_count 条启用规则，继续重启"
     stop_service
     sleep 2
     daemon_start
@@ -576,6 +644,17 @@ show_status() {
     echo "=================================="
     echo "  佐罗上网管控 v$version 状态检查"
     echo "=================================="
+    
+    # 检查启用规则数量
+    local enabled_count=$(check_enabled_rules)
+    echo "启用规则数: $enabled_count"
+    
+    if [ "$enabled_count" -eq 0 ]; then
+        echo "状态: 服务已停止（没有启用规则）"
+        echo ""
+        echo "提示：添加至少一条启用规则后服务会自动启动"
+        return 0
+    fi
     
     # 移除运行时间相关逻辑，仅保留状态和PID
     local pid=""
@@ -610,7 +689,8 @@ show_status() {
         echo "PID: $pid"
         echo "版本: v$version"
     else
-        echo "状态: 未运行"
+        echo "状态: 未运行（但有启用规则）"
+        echo "提示：执行 '/etc/init.d/znetcontrol start' 启动服务"
     fi
     
     echo ""
@@ -683,7 +763,16 @@ case "$1" in
     reload)
         local version=$(get_version)
         log "====== 启动佐罗上网管控 v$version ======"
-        log "重新加载规则"
+        
+        # 检查启用规则数量
+        local enabled_count=$(check_enabled_rules)
+        if [ "$enabled_count" -eq 0 ]; then
+            log "没有启用的规则，停止服务"
+            stop_service
+            exit 0
+        fi
+        
+        log "重新加载规则，发现 $enabled_count 条启用规则"
         load_rules
         sleep 1
         log "规则重新加载完成，状态已更新"
@@ -695,7 +784,16 @@ case "$1" in
         echo "当前时间: $(date '+%Y-%m-%d %H:%M:%S')"
         echo "当前星期: $(date +%u) ($(date +%A))"
         echo "系统版本: v$version"
+        
+        # 检查启用规则数量
+        local enabled_count=$(check_enabled_rules)
+        echo "启用规则数: $enabled_count"
         echo ""
+        
+        if [ "$enabled_count" -eq 0 ]; then
+            echo "警告：没有启用规则，服务不会运行"
+        fi
+        
         echo "配置内容:"
         cat "$CONFIG_FILE"
         echo ""
@@ -711,16 +809,20 @@ case "$1" in
         echo "用法: $0 {start|daemon|stop|restart|status|reload|debug}"
         echo ""
         echo "命令说明:"
-        echo "  start     - 前台启动服务"
-        echo "  daemon    - 后台守护进程模式启动"
+        echo "  start     - 前台启动服务（检查规则数量）"
+        echo "  daemon    - 后台守护进程模式启动（检查规则数量）"
         echo "  stop      - 停止服务"
-        echo "  restart   - 重启服务"
+        echo "  restart   - 重启服务（检查规则数量）"
         echo "  status    - 显示服务状态和当前生效规则"
-        echo "  reload    - 重新加载规则"
+        echo "  reload    - 重新加载规则（检查规则数量）"
         echo "  debug     - 显示调试信息"
+        echo ""
+        echo "规则控制:"
+        echo "  - 当启用规则数 >= 1 时，服务会自动启动"
+        echo "  - 当启用规则数 = 0 时，服务会自动停止"
+        echo "  - 在 Web 界面修改规则时会自动控制服务状态"
         exit 1
         ;;
 esac
 
 exit 0
-

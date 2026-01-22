@@ -104,13 +104,28 @@ function action_save_global_settings()
         
         uci:commit("znetcontrol")
         
-        -- 如果服务状态改变，重启服务
-        if config.enabled ~= nil then
+        -- 获取启用规则数量
+        local enabled_count = 0
+        uci:foreach("znetcontrol", "rule", function(s)
+            if s[".type"] == "rule" then
+                local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
+                if enabled then
+                    enabled_count = enabled_count + 1
+                end
+            end
+        end)
+        
+        -- 根据启用规则数量控制服务
+        if enabled_count >= 1 then
+            -- 有启用规则时，根据全局设置控制服务
             if config.enabled == "1" then
                 sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
             else
                 sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
             end
+        else
+            -- 没有启用规则时停止服务
+            sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
         end
     end
     

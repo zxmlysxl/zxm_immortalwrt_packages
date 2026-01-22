@@ -6,24 +6,66 @@ m = Map("znetcontrol", translate("上网管控规则"),
     translate("为设备设置上网时间管控规则，支持按IP地址或MAC地址、时间段和日期进行精确控制") .. 
     "<br><span style='color: #ff6b6b;'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>")
 
+-- ========== 新增：检查启用规则数量并管理服务 ==========
+local function manage_service_by_rules()
+    -- 统计启用规则数量
+    local enabled_count = 0
+    uci:foreach("znetcontrol", "rule", function(s)
+        if s[".type"] == "rule" then
+            local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
+            if enabled then
+                enabled_count = enabled_count + 1
+            end
+        end
+    end)
+    
+    -- 根据规则数量控制服务
+    if enabled_count >= 1 then
+        -- 有启用规则时启动服务
+        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
+        return enabled_count, true
+    else
+        -- 没有启用规则时停止服务
+        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
+        return enabled_count, false
+    end
+end
+
 -- ========== 修复：立即应用配置 ==========
 -- 覆盖LuCI的默认apply行为
 function m.on_after_apply(self)
     -- 提交配置到文件
     uci:commit("znetcontrol")
     
-    -- 立即重新加载规则
-    local result = sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
+    -- 根据规则数量控制服务
+    local enabled_count, service_running = manage_service_by_rules()
     
-    -- 记录日志
-    sys.call('logger -t znetcontrol "规则已保存并立即应用"')
+    -- 如果有启用规则，重新加载规则
+    if service_running then
+        local result = sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
+        sys.call('logger -t znetcontrol "规则已保存，发现 ' .. enabled_count .. ' 条启用规则，服务已启动"')
+    else
+        sys.call('logger -t znetcontrol "规则已保存，没有启用规则，服务已停止"')
+    end
     
     -- 不执行默认的重定向，让LuCI显示成功消息
     return false
 end
 
--- ========== 移除原有的commit逻辑，使用LuCI标准机制 ==========
--- 删除 has_changes 相关代码，使用LuCI的标准机制
+-- ========== 处理规则删除时的服务状态检查 ==========
+local old_remove = s.remove
+function s.remove(self, section)
+    -- 先删除规则
+    old_remove(self, section)
+    
+    -- 提交配置
+    uci:commit("znetcontrol")
+    
+    -- 检查规则数量并管理服务
+    manage_service_by_rules()
+    
+    return true
+end
 
 s = m:section(TypedSection, "rule", translate("规则列表"))
 s.template = "cbi/tblsection"

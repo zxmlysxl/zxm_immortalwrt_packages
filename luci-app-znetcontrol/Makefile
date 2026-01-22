@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=1.6.1
+PKG_VERSION:=1.6.6
 PKG_RELEASE:=20260122
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
@@ -85,6 +85,7 @@ define Package/luci-app-znetcontrol/install
 	
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./root/usr/bin/znetcontrol.sh $(1)/usr/bin/znetcontrol.sh
+	$(INSTALL_BIN) ./root/usr/bin/znetcontrol-monitor.sh $(1)/usr/bin/znetcontrol-monitor.sh
 	
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/znetcontrol $(1)/etc/config/znetcontrol

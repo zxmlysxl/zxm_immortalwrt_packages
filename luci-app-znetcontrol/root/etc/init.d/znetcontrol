@@ -7,6 +7,7 @@ PID_FILE="/var/run/znetcontrol.pid"
 DAEMON="/usr/bin/znetcontrol.sh"
 NAME="znetcontrol"
 DESC="ZNetControl Internet Access Control"
+CONFIG_FILE="/etc/config/znetcontrol"
 
 # ========== 修复：彻底清理所有相关进程 ==========
 kill_all_processes() {
@@ -24,8 +25,45 @@ kill_all_processes() {
     rm -f "$PID_FILE"
 }
 
+# ========== 新增：检查启用规则数量 ==========
+check_enabled_rules() {
+    local enabled_count=0
+    
+    if [ -f "$CONFIG_FILE" ]; then
+        # 方法1：使用grep检查配置文件
+        enabled_count=$(grep -c "option enabled '1'" "$CONFIG_FILE" 2>/dev/null || echo 0)
+        
+        # 方法2：如果没有找到，尝试其他格式
+        if [ "$enabled_count" -eq 0 ]; then
+            enabled_count=$(grep -c "^[[:space:]]*option enabled[[:space:]]*['\"]1['\"]" "$CONFIG_FILE" 2>/dev/null || echo 0)
+        fi
+        
+        # 方法3：检查uci配置
+        if command -v uci >/dev/null 2>&1; then
+            local uci_count=$(uci show znetcontrol 2>/dev/null | grep -c "\.enabled='1'" || echo 0)
+            if [ "$uci_count" -gt "$enabled_count" ]; then
+                enabled_count="$uci_count"
+            fi
+        fi
+    fi
+    
+    echo "$enabled_count"
+}
+
 start() {
     echo "Starting $DESC..."
+    
+    # 检查是否有启用规则
+    local rule_count=$(check_enabled_rules)
+    
+    if [ "$rule_count" -eq 0 ]; then
+        echo "No enabled rules found, skipping $DESC start"
+        # 确保没有残留进程
+        kill_all_processes
+        return 0
+    fi
+    
+    echo "Found $rule_count enabled rules, starting $DESC..."
     
     # 先彻底清理旧进程
     kill_all_processes
@@ -57,22 +95,53 @@ restart() {
     echo "Restarting $DESC..."
     stop
     sleep 3
+    
+    # 检查规则数量
+    local rule_count=$(check_enabled_rules)
+    if [ "$rule_count" -eq 0 ]; then
+        echo "No enabled rules found, $DESC will remain stopped"
+        return 0
+    fi
+    
+    echo "Found $rule_count enabled rules, restarting $DESC..."
     start
 }
 
 status() {
-    # 修复：强制刷新PID文件后再调用status
+    # 检查规则数量
+    local rule_count=$(check_enabled_rules)
+    echo "Enabled rules: $rule_count"
+    
+    # 检查进程状态
     local running_pid=$(pgrep -f "znetcontrol.sh daemon" | head -1)
     if [ -n "$running_pid" ]; then
         echo "$running_pid" > "$PID_FILE"
+        echo "Status: Running (PID: $running_pid)"
+        $DAEMON status
+        return 0
+    else
+        echo "Status: Stopped"
+        
+        # 如果有启用规则但服务未运行，提示可以启动
+        if [ "$rule_count" -gt 0 ]; then
+            echo "Note: There are $rule_count enabled rules but service is not running"
+            echo "You can start it with: /etc/init.d/znetcontrol start"
+        fi
+        return 1
     fi
-    $DAEMON status
-    return $?
 }
-
 
 reload() {
     echo "Reloading $DESC rules..."
+    
+    # 检查规则数量
+    local rule_count=$(check_enabled_rules)
+    if [ "$rule_count" -eq 0 ]; then
+        echo "No enabled rules found, stopping service instead"
+        stop
+        return 0
+    fi
+    
     $DAEMON reload
     return $?
 }
