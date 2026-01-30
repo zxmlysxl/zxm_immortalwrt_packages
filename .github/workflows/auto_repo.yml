@@ -65,6 +65,8 @@ jobs:
             {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"luci-app-momo","dest":"luci-app-momo","branch":"main"},
             {"url":"https://github.com/nikkinikki-org/OpenWrt-momo.git","dir":"momo","dest":"momo","branch":"main"},
             {"url":"https://github.com/vernesong/OpenClash.git","dir":"luci-app-openclash","dest":"luci-app-openclash","branch":"master"},
+            {"url":"https://github.com/timsaya/luci-app-bandix.git","dir":"luci-app-bandix","dest":"bandix/luci-app-bandix","branch":"main"},
+            {"url":"https://github.com/timsaya/openwrt-bandix.git","dir":"openwrt-bandix","dest":"bandix/openwrt-bandix","branch":"main"},
             {"url":"https://github.com/linkease/istore.git","dest":"istore","branch":"main"}
           ]'
 
