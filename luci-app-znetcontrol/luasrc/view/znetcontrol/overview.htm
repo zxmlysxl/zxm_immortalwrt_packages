@@ -41,80 +41,6 @@
         </div>
     </fieldset>
     
-    <!-- ========== 居中显示的全局设置区块 ========== -->
-    <div class="cbi-section" style="display: flex; justify-content: center; margin: 30px 0;">
-        <div style="width: 100%; max-width: 600px;">
-            <!-- 使用与OpenWrt一致的结构和类名 -->
-            <h3 class="cbi-section-title" style="text-align: center;"><%:全局设置%></h3>
-            
-            <div class="cbi-section-node">
-                <!-- 启用服务 -->
-                <div class="cbi-value">
-                    <label class="cbi-label"><%:启用服务%></label>
-                    <div class="cbi-value-field">
-                        <select id="global-enabled" class="cbi-input-select">
-                            <option value="1" <% if global_settings.enabled == "1" then %>selected<% end %>> <%:启用%> </option>
-                            <option value="0" <% if global_settings.enabled == "0" then %>selected<% end %>> <%:禁用%> </option>
-                        </select>
-                        <div class="cbi-value-description">
-                            <%:控制整个服务的开关状态%>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 日志自动刷新间隔 -->
-                <div class="cbi-value">
-                    <label class="cbi-label"><%:日志自动刷新间隔%></label>
-                    <div class="cbi-value-field">
-                        <select id="log-auto-refresh" class="cbi-input-select">
-                            <option value="5" <% if global_settings.log_auto_refresh == "5" then %>selected<% end %>> <%:5秒%> </option>
-                            <option value="10" <% if global_settings.log_auto_refresh == "10" then %>selected<% end %>> <%:10秒%> </option>
-                            <option value="30" <% if global_settings.log_auto_refresh == "30" then %>selected<% end %>> <%:30秒%> </option>
-                            <option value="60" <% if global_settings.log_auto_refresh == "60" then %>selected<% end %>> <%:60秒%> </option>
-                            <option value="120" <% if global_settings.log_auto_refresh == "120" then %>selected<% end %>> <%:2分钟%> </option>
-                            <option value="300" <% if global_settings.log_auto_refresh == "300" then %>selected<% end %>> <%:5分钟%> </option>
-                            <option value="0" <% if global_settings.log_auto_refresh == "0" then %>selected<% end %>> <%:不自动刷新%> </option>
-                        </select>
-                        <div class="cbi-value-description">
-                            <%:设置日志页面自动刷新的时间间隔%>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 日志最大显示行数 -->
-                <div class="cbi-value">
-                    <label class="cbi-label"><%:日志最大显示行数%></label>
-                    <div class="cbi-value-field">
-                        <select id="log-max-lines" class="cbi-input-select">
-                            <option value="100" <% if global_settings.log_max_lines == "100" then %>selected<% end %>> <%:100行%> </option>
-                            <option value="500" <% if global_settings.log_max_lines == "500" then %>selected<% end %>> <%:500行%> </option>
-                            <option value="1000" <% if global_settings.log_max_lines == "1000" then %>selected<% end %>> <%:1000行%> </option>
-                            <option value="2000" <% if global_settings.log_max_lines == "2000" then %>selected<% end %>> <%:2000行%> </option>
-                            <option value="5000" <% if global_settings.log_max_lines == "5000" then %>selected<% end %>> <%:5000行%> </option>
-                        </select>
-                        <div class="cbi-value-description">
-                            <%:设置日志页面最大显示行数，避免内存占用过高%>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- 清空日志时备份 -->
-                <div class="cbi-value">
-                    <label class="cbi-label"><%:清空日志时备份%></label>
-                    <div class="cbi-value-field">
-                        <select id="log-backup-enabled" class="cbi-input-select">
-                            <option value="0" <% if global_settings.log_backup_enabled == "0" then %>selected<% end %>> <%:不备份（直接清空）%> </option>
-                            <option value="1" <% if global_settings.log_backup_enabled == "1" then %>selected<% end %>> <%:备份（保留7天）%> </option>
-                        </select>
-                        <div class="cbi-value-description">
-                            <%:清空日志前自动备份，保留7天历史日志%>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
     <div class="cbi-page-actions">
         <button class="cbi-button cbi-button-apply" onclick="restartService()">
             <%:重启服务%>
@@ -128,40 +54,10 @@
         <button class="cbi-button cbi-button-action" onclick="refreshStatus()">
             <%:刷新状态%>
         </button>
-        <button class="cbi-button cbi-button-save" onclick="saveGlobalSettings()">
-            <%:保存设置%>
-        </button>
     </div>
 </div>
 
 <script>
-// 保存全局设置
-function saveGlobalSettings() {
-    const settings = {
-        enabled: document.getElementById('global-enabled').value,
-        log_auto_refresh: document.getElementById('log-auto-refresh').value,
-        log_max_lines: document.getElementById('log-max-lines').value,
-        log_backup_enabled: document.getElementById('log-backup-enabled').value
-    };
-    
-    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/save_global_settings")%>', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(settings)
-    })
-    .then(response => response.json())
-    .then(data => {
-        alert(data.message);
-        setTimeout(refreshStatus, 2000);
-    })
-    .catch(error => {
-        console.error('保存设置失败:', error);
-        alert('保存设置失败，请重试');
-    });
-}
-
 // 更快的状态刷新（修复PID显示bug）
 function refreshStatus(force = false) {
     // 显示正在刷新
@@ -346,47 +242,5 @@ document.addEventListener('DOMContentLoaded', function() {
     color: #721c24;
     border: 1px solid #f5c6cb;
 }
-
-/* 使用OpenWrt标准类名 */
-.cbi-input-select {
-    padding: 6px 10px;
-    border-radius: 4px;
-    border: 1px solid #ddd;
-    min-width: 150px;
-}
-
-/* 确保全局设置部分使用标准OpenWrt样式 */
-.cbi-section {
-    margin-top: 20px;
-    margin-bottom: 20px;
-}
-
-.cbi-section-title {
-    font-size: 16px;
-    font-weight: bold;
-    margin-bottom: 15px;
-    padding-bottom: 8px;
-    border-bottom: 2px solid #0053a6;
-}
-
-.cbi-value-description {
-    color: #666;
-    font-size: 12px;
-    margin-top: 5px;
-    font-style: italic;
-}
-
-/* 响应式调整：在手机屏幕上适当调整宽度 */
-@media (max-width: 768px) {
-    .cbi-section[style*="justify-content: center"] > div {
-        width: 95% !important;
-        max-width: 95% !important;
-    }
-    
-    .cbi-input-select {
-        min-width: 120px;
-    }
-}
 </style>
 <%+footer%>
-

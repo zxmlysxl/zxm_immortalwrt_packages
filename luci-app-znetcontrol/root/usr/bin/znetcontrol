@@ -1,0 +1,625 @@
+#!/bin/bash
+
+crrun=$1
+crid=$2
+NAME=znetcontrol
+DEBUG=0
+
+NFT_TABLE="inet $NAME"
+LOG_FILE="/var/log/$NAME.log"
+CONFIG_FILE="/etc/config/$NAME"
+
+config_get_type() {
+    local ret=$(uci -q get "${NAME}.${1}")
+    echo "${ret:=$2}"
+}
+
+config_n_get() {
+    local ret=$(uci -q get "${NAME}.${1}.${2}")
+    echo "${ret:=$3}"
+}
+
+config_t_get() {
+    local index=${3:-0}
+    local default=$4
+    local ret=$(uci -q get "${NAME}.@${1}[${index}].${2}")
+    echo "${ret:-$default}"
+}
+
+config_t_set() {
+    local index=${4:-0}
+    local ret=$(uci -q set "${NAME}.@${1}[${index}].${2}=${3}")
+}
+
+IDLIST="/var/run/$NAME.idlist"
+TMPID="/var/run/$NAME.tmpid"
+list_type=$(config_t_get settings control_mode 0 "blacklist")
+CHAIN=$(config_t_get settings chain 0 "forward")
+
+bin_nft=$(which nft 2>/dev/null)
+bin_iptables=$(which iptables 2>/dev/null)
+bin_ip6tables=$(which ip6tables 2>/dev/null)
+bin_conntrack=$(which conntrack 2>/dev/null)
+
+is_input_chain() {
+    [ "$CHAIN" = "input" ]
+}
+
+log() {
+    local d="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[$d] $@" >>$LOG_FILE
+}
+
+info() {
+    log "INFO: $@"
+}
+
+dbg() {
+    [ "$DEBUG" -eq 1 ] && log "DEBUG: $@"
+}
+
+parse_target() {
+    local target="$1"
+    
+    target=$(echo "${target}" | xargs)
+    
+    # 单个IP地址
+    if echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        local octets=(${target//./ })
+        for octet in "${octets[@]}"; do
+            [ "$octet" -le 255 ] || return 1
+        done
+        echo "ipv4:single:${target}"
+        return 0
+    
+    # IP范围
+    elif echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}-([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        local start_ip=${target%-*}
+        local end_ip=${target#*-}
+        
+        local start_octets=(${start_ip//./ })
+        local end_octets=(${end_ip//./ })
+        for i in {0..3}; do
+            [ "${start_octets[$i]}" -le 255 ] && [ "${end_octets[$i]}" -le 255 ] || return 1
+        done
+        
+        echo "ipv4:range:${target}"
+        return 0
+    
+    # CIDR格式
+    elif echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'; then
+        local ip=${target%/*}
+        local mask=${target#*/}
+        
+        if [ "$mask" -ge 0 ] && [ "$mask" -le 32 ]; then
+            local octets=(${ip//./ })
+            for octet in "${octets[@]}"; do
+                [ "$octet" -le 255 ] || return 1
+            done
+            echo "ipv4:cidr:${target}"
+            return 0
+        fi
+    
+    # MAC地址
+    elif echo "$target" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
+        echo "mac:single:${target,,}"
+        return 0
+    
+    # IPv6地址
+    elif echo "$target" | grep -qE '^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$'; then
+        echo "ipv6:single:${target}"
+        return 0
+    
+    # IPv6 CIDR
+    elif echo "$target" | grep -qE '^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}/[0-9]{1,3}$'; then
+        local ipv6=${target%/*}
+        local mask=${target#*/}
+        if [ "$mask" -ge 0 ] && [ "$mask" -le 128 ]; then
+            echo "ipv6:cidr:${target}"
+            return 0
+        fi
+    fi
+    
+    return 1
+}
+
+convert_to_old_format() {
+    local target="$1"
+    local parsed_result=$(parse_target "$target")
+    [ $? -ne 0 ] && return 1
+    
+    IFS=':' read -r type subtype value <<< "$parsed_result"
+    
+    case "$type" in
+        "ipv4")
+            case "$subtype" in
+                "single") 
+                    echo "ip ipv4_addr $value"
+                    ;;
+                "range")
+                    local start_ip=${value%-*}
+                    local end_ip=${value#*-}
+                    echo "ip ipv4_addr { $start_ip-$end_ip }"
+                    ;;
+                "cidr")
+                    echo "ip ipv4_addr $value"
+                    ;;
+            esac
+            ;;
+        "mac")
+            echo "bridge ether_addr $value"
+            ;;
+        "ipv6")
+            case "$subtype" in
+                "single") echo "ip6 ipv6_addr $value" ;;
+                "cidr") echo "ip6 ipv6_addr $value" ;;
+            esac
+            ;;
+    esac
+}
+
+flush_connections() {
+    local target="$1"
+    
+    if [ -x "$bin_conntrack" ]; then
+        local parsed_result=$(parse_target "${target}")
+        if [ $? -eq 0 ]; then
+            IFS=':' read -r type subtype value <<< "${parsed_result}"
+            
+            case "${type}" in
+                "ipv4")
+                    case "$subtype" in
+                        "single")
+                            $bin_conntrack -D -s "${value}" 2>/dev/null || true
+                            $bin_conntrack -D -d "${value}" 2>/dev/null || true
+                            dbg "清理IP连接: ${value}"
+                            ;;
+                        "cidr")
+                            $bin_conntrack -D -s "${value}" 2>/dev/null || true
+                            $bin_conntrack -D -d "${value}" 2>/dev/null || true
+                            dbg "清理CIDR连接: ${value}"
+                            ;;
+                    esac
+                    info "断开连接: ${target}"
+                    ;;
+                "mac")
+                    if [ -f "/proc/net/arp" ]; then
+                        local ip_addr=$(grep -i "${value}" /proc/net/arp 2>/dev/null | awk '{print $1}' | head -1)
+                        if [ -n "${ip_addr}" ]; then
+                            $bin_conntrack -D -s "${ip_addr}" 2>/dev/null || true
+                            $bin_conntrack -D -d "${ip_addr}" 2>/dev/null || true
+                            dbg "清理MAC连接: ${value} (IP: ${ip_addr})"
+                            info "断开MAC连接: ${value}"
+                        fi
+                    fi
+                    ;;
+            esac
+        else
+            dbg "无法解析目标地址: ${target}"
+        fi
+    else
+        dbg "conntrack未安装"
+    fi
+}
+
+nft_table_exists() {
+    local table=$1
+    nft list tables | grep -q "$table"
+}
+
+nft_set_exists() {
+    local table=$1
+    local set=$2
+    nft list sets | grep -q "$table $set"
+}
+
+stop_timecontrol() {
+    if [ -n "$nftables_ver" ]; then
+        nft delete table $NFT_TABLE 2>/dev/null && info "已清理nftables规则"
+    fi
+
+    rm -rf  "$IDLIST" "$TMPID" 2>/dev/null
+}
+
+init_timecontrol() {
+    info "初始化时间控制"
+    
+    if [ -n "$nftables_ver" ]; then
+        # 确保清理旧的表
+        nft delete table inet znetcontrol 2>/dev/null || true
+        
+        # 创建一个统一的inet表
+        nft add table inet znetcontrol
+        dbg "创建表 inet znetcontrol"
+        
+        # 只创建黑名单集合（移除了白名单相关）
+        nft add set inet znetcontrol blacklist_list "{ type ether_addr; flags interval; }" 2>/dev/null || true
+        nft add set inet znetcontrol blacklist_ip "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+        
+        # 创建INPUT链（用于强力控制）
+        nft add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }"
+        nft add rule inet znetcontrol input ether saddr @blacklist_list drop comment "强力控制：阻止MAC访问路由器和网络"
+        nft add rule inet znetcontrol input ip saddr @blacklist_ip drop comment "强力控制：阻止IP访问路由器和网络"
+        dbg "创建INPUT链（强力控制）"
+        
+        # 创建FORWARD链（用于普通控制）
+        nft add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
+        nft add rule inet znetcontrol forward ether saddr @blacklist_list drop comment "普通控制：阻止MAC上网"
+        nft add rule inet znetcontrol forward ip saddr @blacklist_ip drop comment "普通控制：阻止IP上网"
+        dbg "创建FORWARD链（普通控制）"
+        
+        info "nftables规则初始化完成，控制模式：黑名单模式"
+    fi
+    
+    info "初始化完成"
+}
+
+timeadd() {
+    local id=$1
+    local target=$(config_t_get device target "$id")
+    local name=$(config_t_get device name "$id")
+    local chain=$(config_t_get device chain "$id" "forward")
+    [ -z "$target" ] && return
+    
+    # 使用规则名称或目标地址
+    local display_name="$name"
+    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
+        display_name="$target"
+    fi
+    
+    info "添加设备控制: $display_name ($target)，控制强度: $chain"
+    
+    # 解析目标类型
+    local parsed_result=$(parse_target "$target")
+    if [ $? -ne 0 ]; then
+        dbg "无法解析目标地址: $target"
+        return
+    fi
+    
+    IFS=':' read -r type subtype value <<< "$parsed_result"
+    
+    if [ -n "$nftables_ver" ]; then
+        case "$type" in
+            "mac")
+                # 添加MAC地址到黑名单集合
+                nft add element inet znetcontrol "blacklist_list" "{ $value }"
+                info "✅ 成功添加MAC到黑名单: $value"
+                ;;
+            "ipv4")
+                # 添加IP地址到黑名单IP集合
+                case "$subtype" in
+                    "single"|"range"|"cidr")
+                        nft add element inet znetcontrol "blacklist_ip" "{ $value }"
+                        info "✅ 成功添加IP到黑名单: $value"
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+    
+    # 应用控制强度
+    if [ "$chain" = "input" ]; then
+        # 强力控制：断开现有连接
+        flush_connections "$target"
+        
+        # 确保INPUT链规则激活
+        nft add rule inet znetcontrol input ether saddr "{ $value }" drop 2>/dev/null || true
+        nft add rule inet znetcontrol forward ether saddr "{ $value }" drop 2>/dev/null || true
+        
+        info "🔒 规则【$display_name】已应用强力控制（INPUT+FORWARD），已断开连接"
+    else
+        # 普通控制：只添加到FORWARD链
+        nft add rule inet znetcontrol forward ether saddr "{ $value }" drop 2>/dev/null || true
+        info "🔗 规则【$display_name】已应用普通控制（FORWARD）"
+    fi
+    
+    info "✅ 规则【$display_name】已添加"
+}
+
+timedel() {
+    local id=$1
+    local target=$(config_t_get device target "$id")
+    local name=$(config_t_get device name "$id")
+    [ -z "$target" ] && return
+    
+    # 使用规则名称或目标地址
+    local display_name="$name"
+    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
+        display_name="$target"
+    fi
+    
+    info "移除设备控制: $display_name ($target)"
+    
+    # 解析目标类型
+    local parsed_result=$(parse_target "$target")
+    if [ $? -ne 0 ]; then
+        dbg "无法解析目标地址: $target"
+        return
+    fi
+    
+    IFS=':' read -r type subtype value <<< "$parsed_result"
+    
+    if [ -n "$nftables_ver" ]; then
+        case "$type" in
+            "mac")
+                nft delete element inet znetcontrol "${list_type}_list" "{ $value }" 2>/dev/null || true
+                info "✅ 从MAC阻止列表移除: $value"
+                ;;
+            "ipv4")
+                case "$subtype" in
+                    "single"|"range"|"cidr")
+                        nft delete element inet znetcontrol "${list_type}_ip" "{ $value }" 2>/dev/null || true
+                        info "✅ 从IP阻止列表移除: $value"
+                        ;;
+                esac
+                ;;
+        esac
+    fi
+    # 注意：这里不执行flush_connections，让规则在保存后才生效
+}
+
+check_time() {
+    local start=$1
+    local end=$2
+    local current=$(date +%H%M)
+    local start_min=$((10#${start:0:2}*60 + 10#${start:3:2}))
+    local end_min=$((10#${end:0:2}*60 + 10#${end:3:2}))
+    local current_min=$((10#${current:0:2}*60 + 10#${current:2:2}))
+    
+    if [[ $start_min -lt $end_min ]]; then
+        [[ $current_min -ge $start_min && $current_min -lt $end_min ]]
+    else
+        [[ $current_min -ge $start_min || $current_min -lt $end_min ]]
+    fi
+}
+
+check_list() {
+    local i=$1
+    local start_time=$(config_t_get device timestart "$i")
+    local end_time=$(config_t_get device timeend "$i")
+    local wweek=$(config_t_get device week "$i")
+    local current_weekday=$(date +%u)
+    
+    # 检查星期（0表示每天）
+    if [ "$wweek" != "0" ]; then
+        # 将逗号分隔的星期转换为grep模式
+        local week_pattern=$(echo "$wweek" | sed 's/,/\\|/g')
+        if ! echo "$current_weekday" | grep -q "^\($week_pattern\)$"; then
+            dbg "规则 $i 不在生效星期内（配置: $wweek, 当前: $current_weekday）"
+            return 1
+        fi
+    fi
+    
+    # 如果开始时间和结束时间都为空，表示全天生效
+    if [ -z "$start_time" ] && [ -z "$end_time" ]; then
+        dbg "规则 $i 全天生效"
+        return 0
+    fi
+    
+    # 设置默认值
+    start_time=${start_time:-"00:00"}
+    end_time=${end_time:-"23:59"}
+    
+    # 检查时间
+    if ! check_time "$start_time" "$end_time"; then
+        dbg "规则 $i 不在生效时间内（$start_time - $end_time）"
+        return 1
+    fi
+    
+    dbg "规则 $i 在生效时间内"
+    return 0
+}
+
+show_status() {
+    echo ""
+    echo "┌────────────────────────────────────────────┐"
+    echo "│           ZNetControl 系统状态             │"
+    echo "├────────────────────────────────────────────┤"
+    
+    # 控制模式
+    if [ "$StrongCHAIN" -eq 1 ]; then
+        echo "│    控制模式: 强力控制 (INPUT链)            │"
+        echo "│    阻止访问路由器和互联网，立即生效        │"
+    else
+        echo "│    控制模式: 普通控制 (FORWARD链)          │"
+        echo "│    仅阻止互联网访问，可能有延迟            │"
+    fi
+    
+    echo "├────────────────────────────────────────────┤"
+   
+    # 当前时间
+    echo "│ 当前时间: $(date '+%Y-%m-%d %H:%M:%S')              │"
+    echo "│ 星期: $(date '+%u' | sed 's/1/星期一/;s/2/星期二/;s/3/星期三/;s/4/星期四/;s/5/星期五/;s/6/星期六/;s/7/星期日/') │"
+    echo "├────────────────────────────────────────────┤"
+    
+    if [ -s "$IDLIST" ]; then
+    local device_count=$(wc -l < $IDLIST 2>/dev/null || echo "0")
+    echo "│ 控制设备数: $device_count 个                           │"
+    
+        echo "├────────────────────────────────────────────┤"
+        echo "│ 控制中的设备:                              │"
+        local count=0
+        cat "$IDLIST" | sed 's/!//g' | head -5 | while read id; do
+            count=$((count + 1))
+            local target=$(config_t_get device target "$id")
+            local comment=$(config_t_get device comment "$id" "设备$id")
+            printf "│ %2d  %-15s %-20s     │\n" $count "$comment" "$target"
+        done
+        
+        if [ $device_count -gt 5 ]; then
+            echo "│ ... 还有 $(($device_count - 5)) 个设备           │"
+        fi
+    else
+        echo "│ 控制设备数: 0 个                            │"
+    fi
+    
+    echo "└────────────────────────────────────────────┘"
+    echo ""
+}
+
+show_help() {
+    echo "ZNetControl 上网时间控制系统"
+    echo ""
+    echo "支持的地址格式:"
+    echo "  1. 单个IP: 192.168.1.100"
+    echo "  2. IP范围: 192.168.1.1-192.168.1.100"
+    echo "  3. CIDR: 192.168.1.0/24"
+    echo "  4. MAC地址: 00:11:22:33:44:55"
+    echo ""
+    echo "用法: $0 {start|stop|add <id>|del <id>|status|help}"
+    echo ""
+    echo "配置: 编辑 /etc/config/znetcontrol"
+    echo "日志: 查看 /var/log/znetcontrol.log"
+}
+
+get_enabled_rule_ids() {
+    # 方法1：直接读取配置文件
+    uci show znetcontrol 2>/dev/null | grep -E "\.enable='1'" | grep "\.target" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u
+    
+    # 方法2：备用方法
+    # uci get znetcontrol.@device[0].enable 2>/dev/null | grep -q '1' && echo "0"
+}
+
+# Check if nftables/iptables is available
+if [ -x "$bin_nft" ]; then
+    nftables_ver="true"
+    dbg "nft found: $bin_nft"
+elif [ -x "$bin_iptables" ] || [ -x "$bin_ip6tables" ]; then
+    iptables_ver="true"
+    dbg "iptables found: $bin_iptables"
+else
+    dbg "No firewall tool found!"
+    exit 1
+fi
+
+if is_input_chain; then
+    StrongCHAIN=1
+else
+    StrongCHAIN=0
+fi
+
+case "$crrun" in
+    "stop")
+        info "停止时间控制服务"
+        stop_timecontrol
+        info "所有防火墙规则已清除"
+        ;;
+        "start")
+        stop_timecontrol
+        echo -e "\n====== 启动 ZNetControl ======" > /var/log/znetcontrol.log
+        mkdir -p /var/log /var/run 2>/dev/null
+        touch "$IDLIST" 2>/dev/null
+        
+        info "从配置文件加载规则..."
+        
+        # 获取所有启用的规则ID（修复后的方法）
+        local enabled_ids=""
+        local rule_index=0
+        
+        # 循环检查所有device段
+        while true; do
+            local enable_val=$(uci -q get znetcontrol.@device[$rule_index].enable)
+            local target_val=$(uci -q get znetcontrol.@device[$rule_index].target)
+            
+            # 如果没有更多规则，跳出循环
+            if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+                break
+            fi
+            
+            # 如果规则启用且有目标地址
+            if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+                info "找到启用规则 $rule_index: $target_val"
+                enabled_ids="$enabled_ids $rule_index"
+                echo "!${rule_index}!" >> "$IDLIST"
+            fi
+            
+            rule_index=$((rule_index + 1))
+        done
+        
+        info "发现启用规则: $(echo $enabled_ids | wc -w) 个"
+        
+        # 如果没有找到规则，检查是否有旧的rule段（兼容性）
+        if [ -z "$enabled_ids" ]; then
+            info "检查旧格式规则..."
+            local old_rule_index=0
+            while true; do
+                local enable_val=$(uci -q get znetcontrol.@rule[$old_rule_index].enabled)
+                local target_val=$(uci -q get znetcontrol.@rule[$old_rule_index].target)
+                
+                if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+                    break
+                fi
+                
+                if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+                    info "找到旧格式启用规则 $old_rule_index: $target_val"
+                    enabled_ids="$enabled_ids $old_rule_index"
+                    echo "!${old_rule_index}!" >> "$IDLIST"
+                fi
+                
+                old_rule_index=$((old_rule_index + 1))
+            done
+        fi
+        
+        init_timecontrol
+        
+        # 处理每个启用规则
+        if [ -n "$enabled_ids" ]; then
+            for id in $enabled_ids; do
+                info "处理规则 $id"
+                if check_list "$id"; then
+                    timeadd "$id"
+                    info "✅ 设备 $id 已添加到控制列表"
+                else
+                    if grep -q "!${id}!" "$IDLIST"; then
+                        timedel "$id"
+                        sed -i "/!$id!/d" "$IDLIST"
+                        info "⏰ 设备 $id 不在生效时间，已移除"
+                    fi
+                fi
+            done
+        else
+            info "⚠️ 没有找到启用规则"
+        fi
+        
+        info "时间控制启动完成，控制 $(wc -l < $IDLIST 2>/dev/null || echo 0) 个设备"
+        show_status
+        ;;
+    "add")
+        info "添加设备控制"
+        for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            if check_list "$list"; then
+                timeadd "$list"
+                if ! grep -q "!$list!" "$IDLIST"; then
+                    echo "!$list!" >> "$IDLIST"
+                fi
+                info "设备 $list 已添加"
+            else
+                if grep -q "!${list}!" "$IDLIST"; then
+                    timedel "$list"
+                    sed -i "/!$list!/d" "$IDLIST"
+                    info "设备 $list 已移除"
+                fi
+            fi
+        done
+        ;;
+    "del")
+        info "移除设备控制"
+        for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            timedel "$list"
+            sed -i "/!$list!/d" "$IDLIST"
+            info "设备 $list 已删除"
+        done
+        ;;
+    "status")
+        show_status
+        ;;
+    "help"|"")
+        show_help
+        ;;
+    *)
+        dbg "无效命令: $crrun"
+        show_help
+        exit 1
+        ;;
+esac
+

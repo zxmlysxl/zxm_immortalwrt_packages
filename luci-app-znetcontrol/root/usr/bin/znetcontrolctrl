@@ -1,0 +1,167 @@
+#!/bin/sh
+
+# 基于timecontrolctrl的ZNetControl监控程序
+
+NAME=znetcontrol
+IDLIST="/var/run/$NAME.idlist"
+TMPID="/var/run/$NAME.tmpid"
+
+# 获取启用规则的ID
+get_enabled_rule_ids() {
+    local rule_ids=""
+    local index=0
+    
+    # 检查新的device段
+    while true; do
+        local enable_val=$(uci -q get znetcontrol.@device[$index].enable)
+        local target_val=$(uci -q get znetcontrol.@device[$index].target)
+        
+        if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+            break
+        fi
+        
+        if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+            rule_ids="$rule_ids $index"
+        fi
+        
+        index=$((index + 1))
+    done
+    
+    # 如果没有找到，检查旧的rule段
+    if [ -z "$rule_ids" ]; then
+        index=0
+        while true; do
+            local enable_val=$(uci -q get znetcontrol.@rule[$index].enabled)
+            local target_val=$(uci -q get znetcontrol.@rule[$index].target)
+            
+            if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+                break
+            fi
+            
+            if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+                rule_ids="$rule_ids $index"
+            fi
+            
+            index=$((index + 1))
+        done
+    fi
+    
+    echo $rule_ids
+}
+
+config_t_get() {
+    local index=${3:-0}
+    local ret=$(uci -q get "${NAME}.@${1}[${index}].${2}")
+    echo "${ret:=${4}}"
+}
+
+is_time_in_range() {
+    local start_time=$1
+    local end_time=$2
+    local current_time=$(date +%H:%M)
+
+    if [ "$start_time" = "$end_time" ]; then
+        return 0 
+    elif [ "$start_time" \< "$end_time" ]; then
+        [ "$current_time" \> "$start_time" ] && [ "$current_time" \< "$end_time" ] && return 0
+    else
+        [ "$current_time" \> "$start_time" ] || [ "$current_time" \< "$end_time" ] && return 0
+    fi
+    return 1
+}
+
+is_weekday_in_range() {
+    local configured_weekdays=$1
+    local current_weekday=$(date +%u)
+
+    for ww in $(echo $configured_weekdays | sed 's/,/ /g'); do
+        if [ "$current_weekday" = "$ww" ] || [ "$ww" = "0" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_device() {
+    local id=$1
+    local start_time=$(config_t_get device timestart $id)
+    local end_time=$(config_t_get device timeend $id)
+    local weekdays=$(config_t_get device week $id)
+
+    if is_weekday_in_range "$weekdays" && is_time_in_range "$start_time" "$end_time"; then
+        return 0  
+    else
+        return 1 
+    fi
+}
+
+update_device_status() {
+    local id=$1
+    local action=$2
+    
+    # 获取规则详细信息
+    local name=$(config_t_get device name $id)
+    local target=$(config_t_get device target $id)
+    local chain=$(config_t_get device chain $id "forward")
+    
+    # 使用规则名称或目标地址
+    local display_name="$name"
+    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
+        display_name="$target"
+    fi
+    
+    if [ "$action" = "add" ]; then
+        info "添加规则【$display_name】到控制列表"
+        znetcontrol add $id
+        
+        # 这里只记录，不添加到IDLIST（由主脚本处理）
+        echo "!${id}!" >> $IDLIST
+        
+        # 记录控制强度
+        if [ "$chain" = "input" ]; then
+            info "🔒 规则【$display_name】使用强力控制（INPUT+FORWARD）"
+        else
+            info "🔗 规则【$display_name】使用普通控制（FORWARD）"
+        fi
+    elif [ "$action" = "del" ]; then
+        info "从控制列表移除规则【$display_name】"
+        znetcontrol del $id
+        sed -i "/!$id!/d" $IDLIST >/dev/null 2>&1
+    fi
+}
+
+process_devices() {
+    [ -s $IDLIST ] || touch $IDLIST
+    
+    info "开始检查设备规则..."
+    
+    for id in $(get_enabled_rule_ids); do
+        info "检查规则 $id"
+        if check_device $id; then
+            info "规则 $id 在生效时间内"
+            if ! grep -q "!${id}!" $IDLIST; then
+                info "添加规则 $id 到防火墙"
+                update_device_status $id "add"
+            else
+                info "规则 $id 已在防火墙中"
+            fi
+        else
+            info "规则 $id 不在生效时间内"
+            if grep -q "!${id}!" $IDLIST; then
+                info "从防火墙移除规则 $id"
+                update_device_status $id "del"
+            fi
+        fi
+    done
+
+    cat $IDLIST | sort | uniq > $TMPID 2>/dev/null
+    mv $TMPID $IDLIST 2>/dev/null
+    
+    info "当前防火墙中的规则: $(cat $IDLIST 2>/dev/null | wc -l) 个"
+}
+
+while :; do
+    process_devices
+    sleep 60
+done
+

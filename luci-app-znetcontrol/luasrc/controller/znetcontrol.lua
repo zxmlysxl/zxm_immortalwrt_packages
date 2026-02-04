@@ -1,29 +1,27 @@
 module("luci.controller.znetcontrol", package.seeall)
 
--- 重构版本检测函数：只从版本文件读取
+-- 版本检测函数（不使用版本文件）
 function get_app_version()
     local nixio = require("nixio")
-    local version = ""  -- 空默认值
+    local version = "2.0.0"  -- 默认版本号
     
-    -- 只从版本文件中读取（优先级最高）
-    local version_file = "/etc/znetcontrol.version"
-    if nixio.fs.access(version_file) then
-        local fd = io.open(version_file, "r")
+    -- 尝试从opkg包信息读取
+    local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
+    if nixio.fs.access(control_file) then
+        local fd = io.open(control_file, "r")
         if fd then
             for line in fd:lines() do
-                local ver_match = line:match("^package_version=(.+)")
-                if ver_match then
-                    version = ver_match
+                local ctrl_match = line:match("^Version:%s*(.+)")
+                if ctrl_match then
+                    version = ctrl_match
                     break
                 end
             end
             fd:close()
         end
-    end
-    
-    -- 如果版本文件读取失败，才尝试从opkg读取
-    if version == "" then
-        local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
+    else
+        -- 如果opkg文件不存在，尝试从另一个位置查找
+        control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
         if nixio.fs.access(control_file) then
             local fd = io.open(control_file, "r")
             if fd then
@@ -38,8 +36,8 @@ function get_app_version()
             end
         end
     end
-    
-    return version ~= "" and version or "unknown"
+       
+    return version
 end
 
 function index()
@@ -69,83 +67,13 @@ function index()
     entry({"admin", "control", "znetcontrol", "api", "reload_rules"}, call("action_reload_rules")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "get_config"}, call("action_get_config")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "save_config"}, call("action_save_config")).leaf = true
-    -- 新增保存全局设置的API
-    entry({"admin", "control", "znetcontrol", "api", "save_global_settings"}, call("action_save_global_settings")).leaf = true
-end
-
--- 新增：保存全局设置
-function action_save_global_settings()
-    local uci = require("luci.model.uci").cursor()
-    local http = require("luci.http")
-    local sys = require("luci.sys")
-    
-    -- 读取POST数据
-    local data = luci.http.content()
-    local config = luci.jsonc.parse(data)
-    
-    if config then
-        -- 保存服务启用状态
-        if config.enabled ~= nil then
-            uci:set("znetcontrol", "settings", "enabled", config.enabled)
-        end
-        
-        -- 保存日志相关配置
-        if config.log_auto_refresh then
-            uci:set("znetcontrol", "settings", "log_auto_refresh", config.log_auto_refresh)
-        end
-        
-        if config.log_max_lines then
-            uci:set("znetcontrol", "settings", "log_max_lines", config.log_max_lines)
-        end
-        
-        if config.log_backup_enabled then
-            uci:set("znetcontrol", "settings", "log_backup_enabled", config.log_backup_enabled)
-        end
-        
-        uci:commit("znetcontrol")
-        
-        -- 获取启用规则数量
-        local enabled_count = 0
-        uci:foreach("znetcontrol", "rule", function(s)
-            if s[".type"] == "rule" then
-                local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
-                if enabled then
-                    enabled_count = enabled_count + 1
-                end
-            end
-        end)
-        
-        -- 根据启用规则数量控制服务
-        if enabled_count >= 1 then
-            -- 有启用规则时，根据全局设置控制服务
-            if config.enabled == "1" then
-                sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
-            else
-                sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-            end
-        else
-            -- 没有启用规则时停止服务
-            sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-        end
-    end
-    
-    http.prepare_content("application/json")
-    http.header("Cache-Control", "no-cache, no-store, must-revalidate")
-    http.header("Pragma", "no-cache")
-    http.header("Expires", "0")
-    
-    http.write_json({
-        success = true,
-        message = "全局设置已保存"
-    })
 end
 
 function action_overview()
     local http = require("luci.http")
     local sys = require("luci.sys")
-    local uci = require("luci.model.uci").cursor()
     
-    -- 获取基本状态 - 简化调用方式
+    -- 获取基本状态
     local status_data = {}
     local success, result = pcall(function()
         return action_get_status(true) -- 传递 true 表示直接返回数据
@@ -154,7 +82,7 @@ function action_overview()
     if success then
         status_data = result
     else
-        -- 如果获取失败，使用默认值（移除uptime）
+        -- 如果获取失败，使用默认值
         status_data = {
             running = false,
             total_rules = 0,
@@ -165,22 +93,12 @@ function action_overview()
         }
     end
     
-    -- 获取全局设置
-    local global_settings = {
-        enabled = uci:get("znetcontrol", "settings", "enabled") or "1",
-        log_auto_refresh = uci:get("znetcontrol", "settings", "log_auto_refresh") or "30",
-        log_max_lines = uci:get("znetcontrol", "settings", "log_max_lines") or "1000",
-        log_backup_enabled = uci:get("znetcontrol", "settings", "log_backup_enabled") or "0"
-    }
-    
     -- 渲染模板并传递数据
     http.prepare_content("text/html")
     luci.template.render("znetcontrol/overview", {
-        status = status_data,
-        global_settings = global_settings
+        status = status_data
     })
 end
-
 
 function action_get_status(return_data)
     local sys = require("luci.sys")
@@ -188,73 +106,39 @@ function action_get_status(return_data)
     local http = require("luci.http")
     local nixio = require("nixio")
     
-    -- ========== 修复：简化但更可靠的进程检测 ==========
+    -- ========== 进程检测 ==========
     local is_running = false
-    local real_pid = ""
-    local uptime = ""  -- 新增：运行时间
+    local main_pid = ""
+    local monitor_pid = ""
     
-    -- 直接使用ps命令检测
-    local ps_output = sys.exec("ps w | grep 'znetcontrol.sh daemon' | grep -v grep | head -1")
-    if ps_output and ps_output ~= "" then
-        -- 提取PID：ps输出的第一个字段通常是PID
+    -- 检查主服务进程
+    local main_process = sys.exec("pgrep -f 'znetcontrolctrl' 2>/dev/null | head -1")
+    if main_process and main_process ~= "" then
+        main_pid = main_process:gsub("%s+", "")
+        if tonumber(main_pid) ~= nil then
+            local proc_dir = "/proc/" .. main_pid
+            if nixio.fs.access(proc_dir) then
+                is_running = true
+            end
+        end
+    end
+    
+    -- 检查监控进程
+    local monitor_process = sys.exec("ps w | grep 'znetcontrolctrl' | grep -v grep | head -1")
+    if monitor_process and monitor_process ~= "" then
         local parts = {}
-        for part in ps_output:gmatch("%S+") do
+        for part in monitor_process:gmatch("%S+") do
             table.insert(parts, part)
         end
-        
         if #parts >= 1 then
-            real_pid = parts[1]
-            
-            -- 验证PID是否有效
-            if tonumber(real_pid) ~= nil then
-                -- 再次检查进程是否存在
-                local check_proc = sys.exec("kill -0 " .. real_pid .. " 2>/dev/null && echo 1 || echo 0")
-                if check_proc == "1" then
-                    is_running = true
-                else
-                    -- 尝试其他方法
-                    local proc_exists = sys.exec("test -d /proc/" .. real_pid .. " && echo 1 || echo 0")
-                    is_running = (proc_exists == "1")
-                end
-                
-                -- 获取进程运行时间（新增）
-                if is_running then
-                    uptime = get_process_uptime(real_pid)
-                end
-            end
+            monitor_pid = parts[1]
         end
     end
     
-    -- 如果第一种方法失败，尝试第二种方法
-    if not is_running then
-        -- 使用pgrep
-        local pid_output = sys.exec("pgrep -f 'znetcontrol.sh daemon' 2>/dev/null | head -1")
-        real_pid = pid_output and pid_output:gsub("%s+", "") or ""
-        
-        if real_pid ~= "" and tonumber(real_pid) ~= nil then
-            -- 简单检查进程目录
-            local proc_dir = "/proc/" .. real_pid
-            if nixio.fs.access(proc_dir) then
-                is_running = true
-                -- 获取进程运行时间（新增）
-                uptime = get_process_uptime(real_pid)
-            end
-        end
-    end
-    
-    -- 第三种方法：检查PID文件
-    if not is_running and nixio.fs.access("/var/run/znetcontrol.pid") then
-        local pid_content = nixio.fs.readfile("/var/run/znetcontrol.pid") or ""
-        real_pid = pid_content:gsub("%s+", "")
-        
-        if real_pid ~= "" and tonumber(real_pid) ~= nil then
-            local proc_dir = "/proc/" .. real_pid
-            if nixio.fs.access(proc_dir) then
-                is_running = true
-                -- 获取进程运行时间（新增）
-                uptime = get_process_uptime(real_pid)
-            end
-        end
+    -- 获取运行时间
+    local uptime = ""
+    if is_running and main_pid ~= "" then
+        uptime = get_process_uptime(main_pid)
     end
 
     local status = {
@@ -262,32 +146,52 @@ function action_get_status(return_data)
         total_rules = 0,
         enabled_rules = 0,
         active_rules = 0,
-        pid = real_pid ~= "" and real_pid or nil,
-        uptime = uptime,  -- 新增：运行时间
+        pid = main_pid ~= "" and main_pid or nil,
+        monitor_pid = monitor_pid ~= "" and monitor_pid or nil,
+        uptime = uptime,
         version = get_app_version()
     }
 
     -- ========== 规则统计逻辑 ==========
+    -- 使用新的device段统计规则
     local total_count = 0
     local enabled_count = 0
-    uci:foreach("znetcontrol", "rule", function(s)
-        if s[".type"] == "rule" then
+    uci:foreach("znetcontrol", "device", function(s)
+        if s[".type"] == "device" then
             total_count = total_count + 1
-            local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
+            local enabled = (s.enable ~= "0" and s.enable ~= "false" and s.enable ~= "off")
             if enabled then
                 enabled_count = enabled_count + 1
             end
         end
     end)
+    
+    -- 如果没有device段，检查旧的rule段（兼容性）
+    if total_count == 0 then
+        uci:foreach("znetcontrol", "rule", function(s)
+            if s[".type"] == "rule" then
+                total_count = total_count + 1
+                local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
+                if enabled then
+                    enabled_count = enabled_count + 1
+                end
+            end
+        end)
+    end
+    
     status.total_rules = total_count
     status.enabled_rules = enabled_count
 
+    -- 获取nftables中的规则数
     local active_count = 0
     local nft_output = sys.exec("nft list table inet znetcontrol 2>/dev/null")
     if nft_output and nft_output ~= "" then
+        -- 统计MAC地址
         for mac in nft_output:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
             active_count = active_count + 1
         end
+        
+        -- 统计IP地址（排除集合名称中的数字）
         for ip in nft_output:gmatch("(%d+%.%d+%.%d+%.%d+)") do
             if not ip:match(":") then
                 active_count = active_count + 1
@@ -296,7 +200,20 @@ function action_get_status(return_data)
     end
     status.active_rules = active_count
 
-    -- ========== 修复：正确处理 return_data 参数 ==========
+    -- ========== 自动服务管理 ==========
+    -- 如果有启用规则但服务没运行，尝试启动
+    if enabled_count > 0 and not is_running then
+        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1 &")
+        -- 更新状态
+        is_running = true
+        status.running = true
+    -- 没有启用规则但服务在运行，建议停止
+    elseif enabled_count == 0 and is_running then
+        -- 只是记录，不自动停止，让用户手动处理
+        sys.call('logger -t znetcontrol "注意：没有启用规则但服务在运行中"')
+    end
+
+    -- ========== 正确处理 return_data 参数 ==========
     if return_data then
         return status  -- 直接返回数据表
     end
@@ -308,13 +225,13 @@ function action_get_status(return_data)
     http.header("Expires", "0")
     http.header("X-Content-Type-Options", "nosniff")
     
-    -- 确保running是真正的布尔值
-    local json_str = string.format('{"running":%s,"total_rules":%d,"enabled_rules":%d,"active_rules":%d,"pid":"%s","uptime":"%s","version":"%s"}',
+    local json_str = string.format('{"running":%s,"total_rules":%d,"enabled_rules":%d,"active_rules":%d,"pid":"%s","monitor_pid":"%s","uptime":"%s","version":"%s"}',
         tostring(is_running),
         status.total_rules,
         status.enabled_rules,
         status.active_rules,
-        real_pid or "",
+        main_pid or "",
+        monitor_pid or "",
         uptime or "",
         status.version or "unknown"
     )
@@ -322,7 +239,7 @@ function action_get_status(return_data)
     http.write(json_str)
 end
 
--- ========== 新增：获取进程运行时间的函数（简化版） ==========
+-- ========== 新增：获取进程运行时间的函数 ==========
 function get_process_uptime(pid)
     local sys = require("luci.sys")
     local nixio = require("nixio")
@@ -369,56 +286,12 @@ function get_process_uptime(pid)
     return ""
 end
 
--- ========== 新增：格式化运行时间函数 ==========
-function format_uptime(seconds)
-    seconds = math.floor(tonumber(seconds) or 0)
-    
-    if seconds <= 0 then
-        return "0秒"
-    end
-    
-    local days = math.floor(seconds / 86400)
-    seconds = seconds % 86400
-    
-    local hours = math.floor(seconds / 3600)
-    seconds = seconds % 3600
-    
-    local minutes = math.floor(seconds / 60)
-    seconds = seconds % 60
-    
-    local parts = {}
-    
-    if days > 0 then
-        table.insert(parts, days .. "天")
-    end
-    if hours > 0 then
-        table.insert(parts, hours .. "小时")
-    end
-    if minutes > 0 then
-        table.insert(parts, minutes .. "分")
-    end
-    if seconds > 0 or #parts == 0 then
-        table.insert(parts, seconds .. "秒")
-    end
-    
-    return table.concat(arts, " ")  -- 修复这里的拼写错误：parts 不是 arts
-end
-
-
--- ========== 修复：停止/重启时彻底清理所有相关进程 ==========
+-- ========== 服务控制函数 ==========
 function action_stop()
     local sys = require("luci.sys")
     local http = require("luci.http")
     
-    -- 1. 停止服务（通过init.d脚本）
     local result = sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-    
-    -- 2. 强制清理所有相关进程（防止多进程）
-    sys.call("pkill -f 'znetcontrol.sh daemon' >/dev/null 2>&1")
-    sys.call("pkill -f 'znetcontrol.sh' >/dev/null 2>&1")
-    
-    -- 3. 清理PID文件
-    sys.call("rm -f /var/run/znetcontrol.pid >/dev/null 2>&1")
     
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -435,16 +308,7 @@ function action_restart()
     local sys = require("luci.sys")
     local http = require("luci.http")
     
-    -- 1. 先彻底停止
-    sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-    sys.call("pkill -f 'znetcontrol.sh daemon' >/dev/null 2>&1")
-    sys.call("rm -f /var/run/znetcontrol.pid >/dev/null 2>&1")
-    
-    -- 2. 等待1秒确保进程退出
-    sys.call("sleep 1")
-    
-    -- 3. 启动服务
-    local result = sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
+    local result = sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1")
     
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -457,7 +321,6 @@ function action_restart()
     })
 end
 
--- 其他函数保持不变...
 function action_firewall_status()
     local sys = require("luci.sys")
     local http = require("luci.http")
@@ -487,22 +350,35 @@ function action_firewall_status()
             
             -- 尝试从配置文件中查找这个MAC对应的规则名称
             local rule_name = "未知规则"
-            uci:foreach("znetcontrol", "rule", function(s)
+            -- 先查device段
+            uci:foreach("znetcontrol", "device", function(s)
                 if s.target then
-                    -- 比较MAC地址（不区分大小写）
                     local target_mac = s.target:upper():gsub("[-:]", ":"):gsub("%s+", "")
-                    if target_mac == mac:upper() then
-                        rule_name = s.name or "未命名规则"
-                        return false  -- 找到后停止遍历
-                    end
-                elseif s.mac then  -- 兼容旧版本
-                    local target_mac = s.mac:upper():gsub("[-:]", ":"):gsub("%s+", "")
                     if target_mac == mac:upper() then
                         rule_name = s.name or "未命名规则"
                         return false  -- 找到后停止遍历
                     end
                 end
             end)
+            
+            -- 如果没有找到，查旧的rule段（兼容性）
+            if rule_name == "未知规则" then
+                uci:foreach("znetcontrol", "rule", function(s)
+                    if s.target then
+                        local target_mac = s.target:upper():gsub("[-:]", ":"):gsub("%s+", "")
+                        if target_mac == mac:upper() then
+                            rule_name = s.name or "未命名规则"
+                            return false
+                        end
+                    elseif s.mac then  -- 兼容旧版本
+                        local target_mac = s.mac:upper():gsub("[-:]", ":"):gsub("%s+", "")
+                        if target_mac == mac:upper() then
+                            rule_name = s.name or "未命名规则"
+                            return false
+                        end
+                    end
+                end)
+            end
             
             table.insert(devices, {
                 type = "mac",
@@ -514,18 +390,29 @@ function action_firewall_status()
         -- 提取IP地址
         for ip in nft_output:gmatch("(%d+%.%d+%.%d+%.%d+)") do
             -- 确保是有效的IP地址（不是端口号等）
-            if not ip:match(":") then  -- 排除IPv6或带端口的情况
+            if not ip:match(":") then
                 status.ip_count = status.ip_count + 1
                 status.blocked_count = status.blocked_count + 1
                 
                 -- 尝试从配置文件中查找这个IP对应的规则名称
                 local rule_name = "未知规则"
-                uci:foreach("znetcontrol", "rule", function(s)
+                -- 先查device段
+                uci:foreach("znetcontrol", "device", function(s)
                     if s.target and s.target == ip then
                         rule_name = s.name or "未命名规则"
-                        return false  -- 找到后停止遍历
+                        return false
                     end
                 end)
+                
+                -- 如果没有找到，查旧的rule段（兼容性）
+                if rule_name == "未知规则" then
+                    uci:foreach("znetcontrol", "rule", function(s)
+                        if s.target and s.target == ip then
+                            rule_name = s.name or "未命名规则"
+                            return false
+                        end
+                    end)
+                end
                 
                 table.insert(devices, {
                     type = "ip",
@@ -619,7 +506,6 @@ function action_logs()
     local sys = require("luci.sys")
     local nixio = require("nixio")
     local http = require("luci.http")
-    local uci = require("luci.model.uci").cursor()
     
     local logs = {}
     local logfile = "/var/log/znetcontrol.log"
@@ -689,39 +575,23 @@ function action_clear_logs()
     local sys = require("luci.sys")
     local nixio = require("nixio")
     local http = require("luci.http")
-    local uci = require("luci.model.uci").cursor()
     
     local logfile = "/var/log/znetcontrol.log"
     local success = false
     local message = ""
     
-    -- 读取配置
-    local backup_enabled = uci:get("znetcontrol", "settings", "log_backup_enabled") or "0"
-    
-    -- 设置HTTP头
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
     
     if nixio.fs.access(logfile) then
-        -- 如果启用备份
-        if backup_enabled == "1" then
-            local timestamp = os.date("%Y%m%d_%H%M%S")
-            local backup_file = "/var/log/znetcontrol.log." .. timestamp
-            
-            -- 备份当前日志
-            local backup_result = os.execute(string.format('cp "%s" "%s" 2>/dev/null', logfile, backup_file))
-            
-            -- 清理7天前的备份
-            local cleanup_cmd = "find /var/log -name 'znetcontrol.log.*' -mtime +7 -delete 2>/dev/null"
-            os.execute(cleanup_cmd)
-            
-            message = "日志已备份并清空，备份至: " .. backup_file
-        else
-            -- 不备份，直接清空
-            message = "日志已清空"
-        end
+        -- 备份当前日志
+        local timestamp = os.date("%Y%m%d_%H%M%S")
+        local backup_file = "/var/log/znetcontrol.log." .. timestamp
+        
+        -- 备份当前日志
+        local backup_result = os.execute(string.format('cp "%s" "%s" 2>/dev/null', logfile, backup_file))
         
         -- 清空日志文件
         local fd = io.open(logfile, "w")
@@ -744,6 +614,8 @@ function action_clear_logs()
                 fd2:write(init_log .. "\n")
                 fd2:close()
             end
+            
+            message = "日志已备份并清空，备份至: " .. backup_file
         else
             success = false
             message = "清空日志失败"
@@ -755,7 +627,7 @@ function action_clear_logs()
             local version = get_app_version()
             local init_log = string.format(
                 "%s - 日志文件已创建\n%s - 系统启动 (v%s)",
-                os.date("%Y-%m-%d %H:%M:%S"),
+                os.date("%Y-%m-d %H:%M:%S"),
                 os.date("%Y-%m-%d %H:%M:%S"),
                 version
             )
@@ -769,7 +641,6 @@ function action_clear_logs()
         end
     end
     
-    -- 输出JSON
     http.write_json({
         success = success,
         message = message
@@ -780,7 +651,7 @@ function action_reload_rules()
     local sys = require("luci.sys")
     local http = require("luci.http")
     
-    local result = sys.call("/usr/bin/znetcontrol.sh reload >/dev/null 2>&1")
+    local result = sys.call("/usr/bin/znetcontrol reload >/dev/null 2>&1")
     
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -794,14 +665,14 @@ function action_reload_rules()
 end
 
 -- 获取配置
+-- 获取配置
 function action_get_config()
     local uci = require("luci.model.uci").cursor()
     local http = require("luci.http")
     
     local config = {
-        log_auto_refresh = uci:get("znetcontrol", "settings", "log_auto_refresh") or "30",
-        log_max_lines = uci:get("znetcontrol", "settings", "log_max_lines") or "1000",
-        log_backup_enabled = uci:get("znetcontrol", "settings", "log_backup_enabled") or "0"
+        log_level = uci:get("znetcontrol", "settings", "log_level") or "info",
+        control_mode = uci:get("znetcontrol", "settings", "control_mode") or "blacklist"
     }
     
     http.prepare_content("application/json")
@@ -815,6 +686,7 @@ end
 -- 保存配置
 function action_save_config()
     local uci = require("luci.model.uci").cursor()
+    local sys = require("luci.sys")
     local http = require("luci.http")
     
     -- 读取POST数据
@@ -822,17 +694,23 @@ function action_save_config()
     local config = luci.jsonc.parse(data)
     
     if config then
+        -- 创建或更新settings段
+        local section_id = uci:get("znetcontrol", "settings")
+        if not section_id then
+            uci:section("znetcontrol", "global", "settings", {
+                enabled = "1",
+                log_level = "info",
+                control_mode = "blacklist"
+            })
+        end
+        
         -- 保存配置
-        if config.log_auto_refresh then
-            uci:set("znetcontrol", "settings", "log_auto_refresh", config.log_auto_refresh)
+        if config.log_level then
+            uci:set("znetcontrol", "settings", "log_level", config.log_level)
         end
         
-        if config.log_max_lines then
-            uci:set("znetcontrol", "settings", "log_max_lines", config.log_max_lines)
-        end
-        
-        if config.log_backup_enabled then
-            uci:set("znetcontrol", "settings", "log_backup_enabled", config.log_backup_enabled)
+        if config.control_mode then
+            uci:set("znetcontrol", "settings", "control_mode", config.control_mode)
         end
         
         uci:commit("znetcontrol")
@@ -847,5 +725,97 @@ function action_save_config()
         success = true,
         message = "配置已保存"
     })
+end
+
+-- 保存配置
+function action_save_config()
+    local uci = require("luci.model.uci").cursor()
+    local http = require("luci.http")
+    
+    -- 读取POST数据
+    local data = luci.http.content()
+    local config = luci.jsonc.parse(data)
+    
+    if config then
+        -- 创建或更新settings段
+        local section_id = uci:get("znetcontrol", "settings")
+        if not section_id then
+            uci:section("znetcontrol", "global", "settings", {
+                enabled = "1",
+                log_level = "info"
+            })
+        end
+        
+        -- 保存配置
+        if config.log_auto_refresh then
+            uci:set("znetcontrol", "settings", "log_auto_refresh", config.log_auto_refresh)
+        end
+        
+        if config.log_max_lines then
+            uci:set("znetcontrol", "settings", "log_max_lines", config.log_max_lines)
+        end
+        
+        if config.log_backup_enabled then
+            uci:set("znetcontrol", "settings", "log_backup_enabled", config.log_backup_enabled)
+        end
+        
+        if config.control_mode then
+            uci:set("znetcontrol", "settings", "control_mode", config.control_mode)
+        end
+        
+        if config.chain then
+            uci:set("znetcontrol", "settings", "chain", config.chain)
+        end
+        
+        uci:commit("znetcontrol")
+        
+        -- 重新启动服务使配置生效
+        sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
+    end
+    
+    http.prepare_content("application/json")
+    http.header("Cache-Control", "no-cache, no-store, must-revalidate")
+    http.header("Pragma", "no-cache")
+    http.header("Expires", "0")
+    
+    http.write_json({
+        success = true,
+        message = "配置已保存"
+    })
+end
+
+-- 格式化运行时间函数（供视图使用）
+function format_uptime(seconds)
+    seconds = math.floor(tonumber(seconds) or 0)
+    
+    if seconds <= 0 then
+        return "0秒"
+    end
+    
+    local days = math.floor(seconds / 86400)
+    seconds = seconds % 86400
+    
+    local hours = math.floor(seconds / 3600)
+    seconds = seconds % 3600
+    
+    local minutes = math.floor(seconds / 60)
+    seconds = seconds % 60
+    
+    local parts = {}
+    
+    if days > 0 then
+        table.insert(parts, days .. "天")
+    end
+    if hours > 0 then
+        table.insert(parts, hours .. "小时")
+    end
+    if minutes > 0 then
+        table.insert(parts, minutes .. "分")
+    end
+    if seconds > 0 or #parts == 0 then
+        table.insert(parts, seconds .. "秒")
+    end
+    
+    return table.concat(parts, " ")
 end
 

@@ -1,24 +1,26 @@
+# 全局设置（只保留日志级别）
 config global 'settings'
-	option enabled '1'
-	option scan_interval '60'
-	option log_level 'info'
-	option log_auto_refresh '30'        # 日志自动刷新间隔（秒）
-        option log_max_lines '1000'         # 最大显示行数
-        option log_backup_enabled '0'       # 日志备份开关（0=关闭，1=开启）
+    option enabled '1'
+    option log_level 'info'
+    
+# 规则示例
+# config device 'rule1'
+#    option name '测试设备'
+#    option enable '1'
+#    option target 'A8:64:F1:D5:84:96'  # IP或MAC
+#    option timestart '00:00'
+#    option timeend '23:00'
+#    option week '0'                    # 0=每天, 1=周一, 2=周二...
+#    option chain 'forward'  # forward=普通控制, input=强力控制
+#    option comment '测试设备'
 
-# 示例规则 - 支持MAC或IP
-# config rule 'example_mac'
-#     option name '孩子晚间上网限制'
-#     option target 'AA:BB:CC:DD:EE:FF'    # MAC地址
-#     option enabled '1'
-#     option days '1,2,3,4,5'
-#     option start_time '22:00'
-#     option end_time '06:00'
+# config device 'rule2'
+#     option name '测试IP'
+#     option enable '1'
+#     option target '192.168.1.100'
+#     option timestart '09:00'
+#     option timeend '18:00'
+#     option week '1,2,3,4,5'
+#     option chain 'forward'  # forward=普通控制, input=强力控制
+#     option comment '工作日控制'
 
-# config rule 'example_ip'
-#     option name '特定IP限制'
-#     option target '192.168.1.100'        # IP地址
-#     option enabled '1'
-#     option days '6,7'
-#     option start_time '00:00'
-#     option end_time '23:59'

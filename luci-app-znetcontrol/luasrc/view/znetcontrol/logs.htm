@@ -2,6 +2,23 @@
 <div class="cbi-map">
     <h2 name="content"><%:系统日志%></h2>
     
+    <!-- 日志设置 -->
+    <fieldset class="cbi-section">
+        <legend><%:日志设置%></legend>
+        <div class="cbi-value">
+            <label class="cbi-label"><%:日志级别%></label>
+            <div class="cbi-value-field">
+                <select id="log-level-setting" onchange="changeLogLevel()" style="width: 200px;">
+                    <option value="info">基本信息</option>
+                    <option value="debug">调试信息</option>
+                </select>
+                <button class="cbi-button cbi-button-action" onclick="saveLogSettings()" style="margin-left: 10px;">
+                    <%:保存设置%>
+                </button>
+            </div>
+        </div>
+    </fieldset>
+    
     <fieldset class="cbi-section">
         <legend><%:实时日志%></legend>
         <div class="cbi-value">
@@ -54,6 +71,12 @@
                                 <option value="5000">5000行</option>
                             </select>
                             
+                            <span style="font-size: 12px;">备份:</span>
+                            <select id="log-backup" onchange="changeLogBackup()" style="padding: 5px 10px; border-radius: 4px;">
+                                <option value="0">不备份（直接清空）</option>
+                                <option value="1">备份（保留7天）</option>
+                            </select>
+                            
                             <span style="font-size: 12px;">刷新:</span>
                             <select id="refresh-interval" onchange="changeRefreshInterval()" style="padding: 5px 10px; border-radius: 4px;">
                                 <option value="5">5秒</option>
@@ -82,6 +105,7 @@
                         <div style="font-size: 12px; color: #666;">
                             共 <span id="line-count">0</span> 行 | 
                             刷新间隔: <span id="refresh-display">30</span>秒 |
+                            备份模式: <span id="backup-display">不备份</span> |
                             最后更新: <span id="last-update">--</span>
                         </div>
                     </div>
@@ -189,7 +213,66 @@ let maxLines = 1000;
 let autoRefreshInterval = null;
 let autoRefreshEnabled = true;
 let autoRefreshIntervalMs = 30000; // 默认30秒
+let logBackupEnabled = "0"; // 默认不备份
 let currentLogs = [];
+
+// ========== 日志级别设置 ==========
+function loadLogSettings() {
+    return fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_config")%>')
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+        })
+        .then(config => {
+            // 更新日志级别
+            if (config.log_level) {
+                const logLevelSelect = document.getElementById('log-level-setting');
+                if (logLevelSelect) {
+                    logLevelSelect.value = config.log_level;
+                }
+            }
+            return config;
+        })
+        .catch(error => {
+            console.warn('加载日志设置失败:', error);
+            return { log_level: 'info' };
+        });
+}
+
+function changeLogLevel() {
+    const select = document.getElementById('log-level-setting');
+    const level = select.value;
+    console.log('日志级别更改为:', level);
+}
+
+function saveLogSettings() {
+    const level = document.getElementById('log-level-setting').value;
+    
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/save_config")%>', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            log_level: level
+        })
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            alert('日志设置已保存，需要重启服务生效');
+            // 可以提示用户重启服务
+        } else {
+            alert('保存失败: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('保存失败: ' + error.message);
+    });
+}
 
 // ========== 配置管理 ==========
 function loadConfig() {
@@ -226,6 +309,21 @@ function loadConfig() {
                 }
             }
             
+            // 更新备份设置
+            if (config.log_backup_enabled) {
+                logBackupEnabled = config.log_backup_enabled;
+                const backupSelect = document.getElementById('log-backup');
+                if (backupSelect) {
+                    backupSelect.value = config.log_backup_enabled;
+                }
+                
+                // 更新显示
+                const backupDisplay = document.getElementById('backup-display');
+                if (backupDisplay) {
+                    backupDisplay.textContent = config.log_backup_enabled === "1" ? "备份模式" : "不备份";
+                }
+            }
+            
             console.log('配置加载成功:', config);
             return config;
         })
@@ -234,6 +332,7 @@ function loadConfig() {
             // 使用默认值
             autoRefreshIntervalMs = 30000;
             maxLines = 1000;
+            logBackupEnabled = "0";
             return {
                 log_auto_refresh: '30',
                 log_max_lines: '1000',
@@ -459,6 +558,12 @@ function formatLogLine(log) {
         } else if (message.includes('🔕')) {
             color = '#b5cea8';
             icon = '🔕 ';
+        } else if (message.includes('🔒')) {
+            color = '#c586c0';
+            icon = '🔒 ';
+        } else if (message.includes('🔗')) {
+            color = '#569cd6';
+            icon = '🔗 ';
         } else if (message.includes('解析规则')) {
             color = '#c586c0';
         } else if (message.includes('重新加载规则') || message.includes('从配置文件加载规则')) {
@@ -473,7 +578,7 @@ function formatLogLine(log) {
 }
 
 function clearLogs() {
-    if (confirm('确定要清空所有日志吗？')) {
+    if (confirm('确定要清空所有日志吗？' + (logBackupEnabled === "1" ? '\n（启用备份模式，将保留7天历史日志）' : ''))) {
         fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/clear_logs")%>', { 
             method: 'POST',
             headers: {
@@ -544,7 +649,7 @@ function showSystemStatus() {
 │           佐罗上网管控系统状态                 │
 ├────────────────────────────────────────────┤
 │    控制模式: IP/MAC地址时间控制              │
-│    版本: ${status?.version || '1.5.0'} | 作者: zuoxm  │
+│    版本: ${status?.version || '2.0.0'} | 作者: zuoxm  │
 ├────────────────────────────────────────────┤
 │ 当前时间: ${now.toLocaleDateString('zh-CN')} ${now.toLocaleTimeString('zh-CN', {hour12: false})} │
 │ 星期: ${weekday}                           │
@@ -565,6 +670,7 @@ function showSystemStatus() {
 │  当前在线设备: ${devices?.length || 0}     │
 │  日志显示: ${document.getElementById('line-count').textContent} 行 │
 │  最后更新: ${document.getElementById('last-update').textContent} │
+│  备份模式: ${logBackupEnabled === "1" ? "✅ 启用" : "❌ 禁用"} │
 └────────────────────────────────────────────┘`;
         
         // 添加当前生效的设备列表
@@ -585,55 +691,6 @@ function showSystemStatus() {
         console.error('获取系统状态失败:', error);
         statusContent.textContent = '获取系统状态失败，请刷新页面重试\n错误信息: ' + error.message;
     });
-}
-
-function extractActiveDevicesFromLogs() {
-    const activeDevices = [];
-    const seenDevices = new Set();
-    
-    // 从最新的日志开始向前搜索
-    for (let i = currentLogs.length - 1; i >= 0; i--) {
-        const log = currentLogs[i];
-        
-        // 匹配成功添加
-        const addMatch = log.match(/(成功添加(MAC|IP)到阻止列表): ([^ ]+)/);
-        if (addMatch) {
-            const deviceTarget = addMatch[3];
-            
-            // 去重检查
-            if (seenDevices.has(deviceTarget)) {
-                continue;
-            }
-            seenDevices.add(deviceTarget);
-            
-            // 向前查找规则名称（最多向前查10行）
-            let ruleName = "未知规则";
-            for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
-                const prevLog = currentLogs[j];
-                const ruleMatch = prevLog.match(/解析规则 \d+: name='([^']+)', target='([^']+)'/);
-                if (ruleMatch) {
-                    const matchedTarget = ruleMatch[2];
-                    // 检查目标是否匹配（不区分大小写）
-                    if (matchedTarget.toLowerCase() === deviceTarget.toLowerCase()) {
-                        ruleName = ruleMatch[1];
-                        break;
-                    }
-                }
-            }
-            
-            activeDevices.unshift({
-                name: ruleName,
-                target: deviceTarget
-            });
-            
-            // 最多显示10个设备
-            if (activeDevices.length >= 10) {
-                break;
-            }
-        }
-    }
-    
-    return activeDevices.reverse();
 }
 
 // ========== 辅助功能 ==========
@@ -665,9 +722,31 @@ function changeMaxLines() {
         
         // 保存配置
         saveConfig({
-            log_max_lines: select.value
+            log_max_lines: select.value,
+            log_backup_enabled: logBackupEnabled
         }).then(() => {
             refreshLogs();
+        });
+    }
+}
+
+function changeLogBackup() {
+    const select = document.getElementById('log-backup');
+    const newBackup = select.value;
+    
+    if (newBackup !== logBackupEnabled) {
+        logBackupEnabled = newBackup;
+        
+        // 更新显示
+        const backupDisplay = document.getElementById('backup-display');
+        if (backupDisplay) {
+            backupDisplay.textContent = newBackup === "1" ? "备份模式" : "不备份";
+        }
+        
+        // 保存配置
+        saveConfig({
+            log_max_lines: maxLines.toString(),
+            log_backup_enabled: newBackup
         });
     }
 }
@@ -685,7 +764,9 @@ function changeRefreshInterval() {
     
     // 保存配置
     saveConfig({
-        log_auto_refresh: select.value
+        log_auto_refresh: select.value,
+        log_max_lines: maxLines.toString(),
+        log_backup_enabled: logBackupEnabled
     }).then(() => {
         // 更新间隔
         autoRefreshIntervalMs = newIntervalMs;
@@ -768,6 +849,8 @@ function detectMobile() {
                             <p><span style="color: #f44747;">❌ 错误</span> - 错误和失败信息</p>
                             <p><span style="color: #ce9178;">⏰ 时间</span> - 规则时间相关</p>
                             <p><span style="color: #b5cea8;">🔕 禁用</span> - 规则被禁用</p>
+                            <p><span style="color: #c586c0;">🔒 强力</span> - 强力控制规则</p>
+                            <p><span style="color: #569cd6;">🔗 普通</span> - 普通控制规则</p>
                             <p><span style="color: #4ec9b0;">📊 统计</span> - 规则统计信息</p>
                         </div>
                     </div>
@@ -791,6 +874,7 @@ function detectMobile() {
                             <p>• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p>• 自动刷新: 可配置间隔时间</p>
                             <p>• 最大显示: 可配置显示行数</p>
+                            <p>• 备份模式: 清空日志时自动备份</p>
                             <p>• 键盘快捷键: Ctrl+R 刷新, Ctrl+D 下载</p>
                             <p>• 支持按类型过滤: 信息、成功、警告、错误等</p>
                             <p>• 日志表情说明:</p>
@@ -800,6 +884,8 @@ function detectMobile() {
                                 <span style="color: #f44747;">❌ 错误</span>
                                 <span style="color: #ce9178;">⏰ 时间</span>
                                 <span style="color: #b5cea8;">🔕 禁用</span>
+                                <span style="color: #c586c0;">🔒 强力</span>
+                                <span style="color: #569cd6;">🔗 普通</span>
                             </div>
                         </div>
                     </div>
@@ -837,6 +923,14 @@ function detectMobile() {
                                 <strong style="margin-right: 5px;">禁用</strong> - 规则被禁用
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #c586c0; margin-right: 5px; flex-shrink: 0;">🔒</span>
+                                <strong style="margin-right: 5px;">强力</strong> - 强力控制规则
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
+                                <span style="color: #569cd6; margin-right: 5px; flex-shrink: 0;">🔗</span>
+                                <strong style="margin-right: 5px;">普通</strong> - 普通控制规则
+                            </p>
+                            <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
                                 <span style="color: #4ec9b0; margin-right: 5px; flex-shrink: 0;">📊</span>
                                 <strong style="margin-right: 5px;">统计</strong> - 规则统计信息
                             </p>
@@ -862,6 +956,7 @@ function detectMobile() {
                             <p style="margin: 0;">• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p style="margin: 0;">• 自动刷新: 可配置间隔时间</p>
                             <p style="margin: 0;">• 最大显示: 可配置显示行数</p>
+                            <p style="margin: 0;">• 备份模式: 清空日志时自动备份</p>
                             <p style="margin: 0;">• 键盘快捷键: Ctrl+R 刷新, Ctrl+D 下载</p>
                             <p style="margin: 0;">• 支持按类型过滤: 信息、成功、警告、错误等</p>
                             <div style="margin-top: 5px;">
@@ -872,6 +967,8 @@ function detectMobile() {
                                     <span style="color: #f44747;">❌ 错误</span>
                                     <span style="color: #ce9178;">⏰ 时间</span>
                                     <span style="color: #b5cea8;">🔕 禁用</span>
+                                    <span style="color: #c586c0;">🔒 强力</span>
+                                    <span style="color: #569cd6;">🔗 普通</span>
                                 </div>
                             </div>
                         </div>
@@ -895,8 +992,11 @@ function detectMobile() {
 
 // ========== 初始化 ==========
 window.addEventListener('load', function() {
-    // 加载配置
-    loadConfig().then(config => {
+    // 加载日志设置
+    loadLogSettings().then(() => {
+        // 加载其他配置
+        return loadConfig();
+    }).then(config => {
         console.log('配置加载完成:', config);
         
         // 初始化日志说明
@@ -1075,5 +1175,3 @@ select {
 document.head.appendChild(style);
 </script>
 <%+footer%>
-
-
