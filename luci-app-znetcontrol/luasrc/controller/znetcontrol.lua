@@ -67,6 +67,94 @@ function index()
     entry({"admin", "control", "znetcontrol", "api", "reload_rules"}, call("action_reload_rules")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "get_config"}, call("action_get_config")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "save_config"}, call("action_save_config")).leaf = true
+    entry({"admin", "control", "znetcontrol", "api", "quick_add"}, call("action_quick_add")).leaf = true
+end
+
+-- 快速添加规则函数
+function action_quick_add()
+    local http = require("luci.http")
+    local uci = require("luci.model.uci").cursor()
+    local sys = require("luci.sys")
+    
+    -- 读取POST参数
+    http.prepare_content("application/json")
+    local data = http.formvalue()
+    
+    local target = data and data.target
+    local target_type = data and data.type  -- "mac" 或 "ip"
+    local name = data and data.name
+    
+    if not target then
+        http.write_json({
+            success = false,
+            message = "目标地址不能为空"
+        })
+        return
+    end
+    
+    -- 标准化目标地址
+    target = target:upper():gsub("%s+", ""):gsub("-", ":")
+    
+    -- 检查是否已存在相同规则
+    local exists = false
+    uci:foreach("znetcontrol", "device", function(s)
+        if s.target and s.target:upper():gsub("%s+", ""):gsub("-", ":") == target then
+            exists = true
+        end
+    end)
+    
+    if exists then
+        http.write_json({
+            success = false,
+            message = "该设备已在规则中"
+        })
+        return
+    end
+    
+    -- 生成规则名称
+    if not name or name == "" then
+        if target_type == "mac" then
+            -- 尝试从DHCP获取主机名
+            local dhcp_lease = sys.exec("cat /tmp/dhcp.leases 2>/dev/null | grep -i '" .. target:lower() .. "' | head -1")
+            if dhcp_lease and dhcp_lease ~= "" then
+                local parts = {}
+                for part in dhcp_lease:gmatch("%S+") do
+                    table.insert(parts, part)
+                end
+                if #parts >= 4 and parts[4] ~= "*" then
+                    name = parts[4]
+                end
+            end
+            name = name or "MAC设备_" .. target:sub(13)
+        else
+            name = "IP设备_" .. target
+        end
+    end
+    
+    -- 创建新规则
+    local section_id = uci:section("znetcontrol", "device", nil, {
+        name = name,
+        target = target,
+        enable = "1",
+        week = "0",  -- 默认每天
+        chain = "forward",  -- 默认普通控制
+        comment = "从在线设备页面快速添加"
+    })
+    
+    uci:commit("znetcontrol")
+    
+    -- 重新启动服务使规则生效
+    sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
+    
+    http.write_json({
+        success = true,
+        message = "规则添加成功",
+        data = {
+            id = section_id,
+            name = name,
+            target = target
+        }
+    })
 end
 
 function action_overview()
@@ -106,16 +194,18 @@ function action_get_status(return_data)
     local http = require("luci.http")
     local nixio = require("nixio")
     
-    -- ========== 进程检测 ==========
+    -- ========== 修复：先获取基本状态 ==========
     local is_running = false
     local main_pid = ""
     local monitor_pid = ""
     
-    -- 检查主服务进程
-    local main_process = sys.exec("pgrep -f 'znetcontrolctrl' 2>/dev/null | head -1")
-    if main_process and main_process ~= "" then
-        main_pid = main_process:gsub("%s+", "")
-        if tonumber(main_pid) ~= nil then
+    -- 更可靠的进程检测方法
+    local pgrep_result = sys.exec("pgrep -f 'znetcontrolctrl' 2>/dev/null")
+    if pgrep_result and pgrep_result ~= "" then
+        -- 提取第一个PID
+        main_pid = pgrep_result:match("%d+")
+        if main_pid then
+            -- 检查进程是否真的存在
             local proc_dir = "/proc/" .. main_pid
             if nixio.fs.access(proc_dir) then
                 is_running = true
@@ -123,15 +213,18 @@ function action_get_status(return_data)
         end
     end
     
-    -- 检查监控进程
-    local monitor_process = sys.exec("ps w | grep 'znetcontrolctrl' | grep -v grep | head -1")
-    if monitor_process and monitor_process ~= "" then
-        local parts = {}
-        for part in monitor_process:gmatch("%S+") do
-            table.insert(parts, part)
-        end
-        if #parts >= 1 then
-            monitor_pid = parts[1]
+    -- 备用检测方法
+    if not is_running then
+        local ps_result = sys.exec("ps w | grep 'znetcontrolctrl' | grep -v grep | head -1")
+        if ps_result and ps_result ~= "" then
+            local parts = {}
+            for part in ps_result:gmatch("%S+") do
+                table.insert(parts, part)
+            end
+            if #parts >= 1 then
+                main_pid = parts[1]
+                is_running = true
+            end
         end
     end
     
@@ -146,114 +239,83 @@ function action_get_status(return_data)
         total_rules = 0,
         enabled_rules = 0,
         active_rules = 0,
-        pid = main_pid ~= "" and main_pid or nil,
-        monitor_pid = monitor_pid ~= "" and monitor_pid or nil,
-        uptime = uptime,
+        pid = main_pid or "",
+        monitor_pid = monitor_pid or "",
+        uptime = uptime or "",
         version = get_app_version()
     }
 
     -- ========== 规则统计逻辑 ==========
-    -- 使用新的device段统计规则
     local total_count = 0
     local enabled_count = 0
-    uci:foreach("znetcontrol", "device", function(s)
-        if s[".type"] == "device" then
-            total_count = total_count + 1
-            local enabled = (s.enable ~= "0" and s.enable ~= "false" and s.enable ~= "off")
-            if enabled then
-                enabled_count = enabled_count + 1
-            end
-        end
-    end)
     
-    -- 如果没有device段，检查旧的rule段（兼容性）
-    if total_count == 0 then
-        uci:foreach("znetcontrol", "rule", function(s)
-            if s[".type"] == "rule" then
+    -- 使用安全的遍历方式
+    local success, err = pcall(function()
+        uci:foreach("znetcontrol", "device", function(s)
+            if s[".type"] == "device" then
                 total_count = total_count + 1
-                local enabled = (s.enabled ~= "0" and s.enabled ~= "false" and s.enabled ~= "off")
+                local enabled = (s.enable == "1" or s.enable == "on" or s.enable == "true")
                 if enabled then
                     enabled_count = enabled_count + 1
                 end
             end
         end)
+        
+        -- 如果没有device段，检查旧的rule段（兼容性）
+        if total_count == 0 then
+            uci:foreach("znetcontrol", "rule", function(s)
+                if s[".type"] == "rule" then
+                    total_count = total_count + 1
+                    local enabled = (s.enabled == "1" or s.enabled == "on" or s.enabled == "true")
+                    if enabled then
+                        enabled_count = enabled_count + 1
+                    end
+                end
+            end)
+        end
+    end)
+    
+    if not success then
+        -- 如果遍历出错，使用备用方法
+        local config_content = sys.exec("uci show znetcontrol 2>/dev/null | grep -c '=device'")
+        total_count = tonumber(config_content) or 0
+        enabled_count = 0  -- 简化处理
     end
     
     status.total_rules = total_count
     status.enabled_rules = enabled_count
 
-        -- ========== 修复：统计当前实际生效的规则数 ==========
+    -- ========== 修复：统计当前实际生效的规则数 ==========
     local active_count = 0
     
-    -- 方法1：直接读取IDLIST文件（由znetcontrolctrl维护，最准确）
+    -- 方法1：检查IDLIST文件
     local idlist_file = "/var/run/znetcontrol.idlist"
     if nixio.fs.access(idlist_file) then
         local fd = io.open(idlist_file, "r")
         if fd then
-            local count = 0
-            for line in fd:lines() do
-                -- 统计格式为 !数字! 的行
-                if line:match("^!%d+!$") then
-                    count = count + 1
-                end
-            end
+            local content = fd:read("*all")
             fd:close()
-            active_count = count
-        else
-            -- 如果无法打开文件，尝试用系统命令统计
-            local count_cmd = [[cat /var/run/znetcontrol.idlist 2>/dev/null | grep -c '^![0-9]\+!$' || echo "0"]]
-            local count_result = sys.exec(count_cmd)
-            if count_result and count_result ~= "" then
-                active_count = tonumber(count_result) or 0
+            if content then
+                for _ in content:gmatch("![0-9]+!") do
+                    active_count = active_count + 1
+                end
             end
         end
     end
     
-    -- 方法2：如果IDLIST文件不存在或无法读取，使用备用方法
-    if active_count == 0 then
-        -- 检查是否有任何规则在nftables中
-        local check_cmd = [=[
-            # 简单检查nftables中是否有znetcontrol规则
-            if nft list table ip znetcontrol 2>/dev/null | grep -q "elements = {[^}]*[^[:space:]]" || \
-               nft list table bridge znetcontrol 2>/dev/null | grep -q "elements = {[^}]*[^[:space:]]"; then
-                # 有规则但无法精确统计，检查IDLIST文件
-                if [ -f "/var/run/znetcontrol.idlist" ]; then
-                    wc -l < "/var/run/znetcontrol.idlist" 2>/dev/null || echo "0"
-                else
-                    echo "1"  # 至少有一个规则在生效
-                fi
-            else
-                echo "0"
-            fi
-        ]=]
-        
-        local check_result = sys.exec(check_cmd)
-        if check_result and check_result ~= "" then
-            local check_count = tonumber(check_result) or 0
-            if check_count > 0 then
-                active_count = check_count
-            end
+    -- 方法2：如果IDLIST没有，检查nftables
+    if active_count == 0 and is_running then
+        local nft_check = sys.exec("nft list table inet znetcontrol 2>/dev/null | grep -c 'drop comment'")
+        if nft_check then
+            active_count = tonumber(nft_check) or 0
         end
     end
     
     status.active_rules = active_count
 
-    -- ========== 自动服务管理 ==========
-    -- 如果有启用规则但服务没运行，尝试启动
-    if enabled_count > 0 and not is_running then
-        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1 &")
-        -- 更新状态
-        is_running = true
-        status.running = true
-    -- 没有启用规则但服务在运行，建议停止
-    elseif enabled_count == 0 and is_running then
-        -- 只是记录，不自动停止，让用户手动处理
-        sys.call('logger -t znetcontrol "注意：没有启用规则但服务在运行中"')
-    end
-
-    -- ========== 正确处理 return_data 参数 ==========
+    -- ========== 正确处理返回 ==========
     if return_data then
-        return status  -- 直接返回数据表
+        return status
     end
     
     -- ========== 返回JSON响应 ==========
@@ -261,20 +323,10 @@ function action_get_status(return_data)
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
-    http.header("X-Content-Type-Options", "nosniff")
     
-    local json_str = string.format('{"running":%s,"total_rules":%d,"enabled_rules":%d,"active_rules":%d,"pid":"%s","monitor_pid":"%s","uptime":"%s","version":"%s"}',
-        tostring(is_running),
-        status.total_rules,
-        status.enabled_rules,
-        status.active_rules,
-        main_pid or "",
-        monitor_pid or "",
-        uptime or "",
-        status.version or "unknown"
-    )
-    
-    http.write(json_str)
+    -- 使用更安全的JSON构建
+    local json = require("luci.jsonc")
+    http.write_json(status)
 end
 
 -- ========== 新增：获取进程运行时间的函数 ==========
@@ -369,158 +421,323 @@ function action_firewall_status()
         blocked_count = 0,
         mac_count = 0,
         ip_count = 0,
-        devices = {}
+        devices = {},
+        tables_found = {}
     }
     
-    -- 检查nftables表
-    local nft_output = sys.exec("nft list table inet znetcontrol 2>/dev/null")
+    -- 检查所有可能的表类型
+    local tables_to_check = {
+        {name = "inet znetcontrol", type = "inet"},
+        {name = "ip znetcontrol", type = "ip"},
+        {name = "ip6 znetcontrol", type = "ip6"},
+        {name = "bridge znetcontrol", type = "bridge"}
+    }
     
-    if nft_output and nft_output ~= "" then
-        status.table_exists = true
+    for _, table_info in ipairs(tables_to_check) do
+        local cmd = "nft list table " .. table_info.name .. " 2>/dev/null"
+        local output = sys.exec(cmd)
         
-        -- 提取所有设备（MAC和IP）
-        local devices = {}
-        
-        -- 提取MAC地址
-        for mac in nft_output:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
-            status.mac_count = status.mac_count + 1
-            status.blocked_count = status.blocked_count + 1
+        if output and output ~= "" then
+            status.table_exists = true
+            status.tables_found[table_info.name] = true
             
-            -- 尝试从配置文件中查找这个MAC对应的规则名称
-            local rule_name = "未知规则"
-            -- 先查device段
-            uci:foreach("znetcontrol", "device", function(s)
-                if s.target then
-                    local target_mac = s.target:upper():gsub("[-:]", ":"):gsub("%s+", "")
-                    if target_mac == mac:upper() then
-                        rule_name = s.name or "未命名规则"
-                        return false  -- 找到后停止遍历
+            -- 分析这个表的规则
+            analyze_nft_table(output, table_info.type, status)
+        end
+    end
+    
+    -- 如果没有找到任何nft表，检查iptables
+    if not status.table_exists then
+        local ipt_output = sys.exec("iptables -L znetcontrol -n 2>/dev/null")
+        if ipt_output and ipt_output ~= "" then
+            status.table_exists = true
+            status.tables_found["iptables"] = true
+            
+            -- 统计iptables规则
+            local rule_count = 0
+            for _ in ipt_output:gmatch("DROP") do
+                rule_count = rule_count + 1
+            end
+            status.blocked_count = rule_count
+        end
+    end
+    
+    -- 如果没有找到任何防火墙表，检查IDLIST
+    if not status.table_exists then
+        local idlist_file = "/var/run/znetcontrol.idlist"
+        local nixio = require("nixio")
+        if nixio.fs.access(idlist_file) then
+            local fd = io.open(idlist_file, "r")
+            if fd then
+                local content = fd:read("*all")
+                fd:close()
+                if content then
+                    local rule_count = 0
+                    for _ in content:gmatch("![0-9]+!") do
+                        rule_count = rule_count + 1
+                    end
+                    if rule_count > 0 then
+                        status.blocked_count = rule_count
+                        status.tables_found["idlist"] = true
                     end
                 end
-            end)
-            
-            -- 如果没有找到，查旧的rule段（兼容性）
-            if rule_name == "未知规则" then
-                uci:foreach("znetcontrol", "rule", function(s)
-                    if s.target then
-                        local target_mac = s.target:upper():gsub("[-:]", ":"):gsub("%s+", "")
-                        if target_mac == mac:upper() then
-                            rule_name = s.name or "未命名规则"
-                            return false
-                        end
-                    elseif s.mac then  -- 兼容旧版本
-                        local target_mac = s.mac:upper():gsub("[-:]", ":"):gsub("%s+", "")
-                        if target_mac == mac:upper() then
-                            rule_name = s.name or "未命名规则"
-                            return false
-                        end
-                    end
-                end)
-            end
-            
-            table.insert(devices, {
-                type = "mac",
-                address = mac:upper(),
-                name = rule_name
-            })
-        end
-        
-        -- 提取IP地址
-        for ip in nft_output:gmatch("(%d+%.%d+%.%d+%.%d+)") do
-            -- 确保是有效的IP地址（不是端口号等）
-            if not ip:match(":") then
-                status.ip_count = status.ip_count + 1
-                status.blocked_count = status.blocked_count + 1
-                
-                -- 尝试从配置文件中查找这个IP对应的规则名称
-                local rule_name = "未知规则"
-                -- 先查device段
-                uci:foreach("znetcontrol", "device", function(s)
-                    if s.target and s.target == ip then
-                        rule_name = s.name or "未命名规则"
-                        return false
-                    end
-                end)
-                
-                -- 如果没有找到，查旧的rule段（兼容性）
-                if rule_name == "未知规则" then
-                    uci:foreach("znetcontrol", "rule", function(s)
-                        if s.target and s.target == ip then
-                            rule_name = s.name or "未命名规则"
-                            return false
-                        end
-                    end)
-                end
-                
-                table.insert(devices, {
-                    type = "ip",
-                    address = ip,
-                    name = rule_name
-                })
             end
         end
-        
-        status.devices = devices
     end
     
     http.prepare_content("application/json")
-    http.header("Cache-Control", "no-cache, no-store, must-revalidate")
-    http.header("Pragma", "no-cache")
-    http.header("Expires", "0")
-    
     http.write_json(status)
+end
+
+function analyze_nft_table(output, table_type, status)
+    -- 统计这个表中的drop规则
+    local drop_count = 0
+    for _ in output:gmatch("drop comment") do
+        drop_count = drop_count + 1
+    end
+    
+    status.blocked_count = status.blocked_count + drop_count
+    
+    -- 根据表类型分类统计
+    if table_type == "bridge" then
+        -- bridge表处理MAC地址
+        -- 先检查set中是否有元素
+        local has_mac_elements = false
+        for line in output:gmatch("[^\r\n]+") do
+            if line:match("elements =") and line:match("{") then
+                -- 检查是否有非空的MAC地址元素
+                if not line:match("elements = { }") then
+                    has_mac_elements = true
+                    -- 统计实际元素数量
+                    local element_count = 0
+                    for _ in line:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
+                        element_count = element_count + 1
+                    end
+                    status.mac_count = element_count
+                    break
+                end
+            end
+        end
+        
+        if not has_mac_elements then
+            status.mac_count = 0
+        end
+        
+    elseif table_type == "ip" then
+        -- ip表处理IPv4地址
+        -- 检查set中是否有元素
+        local has_ip_elements = false
+        for line in output:gmatch("[^\r\n]+") do
+            if line:match("elements =") and line:match("{") then
+                -- 检查是否有非空的IP地址元素
+                if not line:match("elements = { }") then
+                    has_ip_elements = true
+                    -- 统计实际元素数量
+                    local element_count = 0
+                    for _ in line:gmatch("(%d+%.%d+%.%d+%.%d+)") do
+                        element_count = element_count + 1
+                    end
+                    status.ip_count = element_count
+                    break
+                end
+            end
+        end
+        
+        if not has_ip_elements then
+            status.ip_count = 0
+        end
+    end
 end
 
 function action_get_devices()
     local sys = require("luci.sys")
     local http = require("luci.http")
+    local uci = require("luci.model.uci").cursor()
+    local nixio = require("nixio")
+    
+    -- 获取所有已配置的设备规则
+    local configured_devices = {}
+    uci:foreach("znetcontrol", "device", function(s)
+        if s.target then
+            local target = s.target:upper():gsub("%s+", ""):gsub("-", ":")
+            configured_devices[target] = true
+        end
+    end)
+    
+    -- 兼容旧版本rule段
+    uci:foreach("znetcontrol", "rule", function(s)
+        if s.target then
+            local target = s.target:upper():gsub("%s+", ""):gsub("-", ":")
+            configured_devices[target] = true
+        elseif s.mac then
+            local target = s.mac:upper():gsub("%s+", ""):gsub("-", ":")
+            configured_devices[target] = true
+        end
+    end)
     
     local devices = {}
-    local arptable = sys.net.arptable() or {}
     
-    for _, entry in ipairs(arptable) do
-        if entry["HW address"] and entry["HW address"] ~= "00:00:00:00:00:00" then
-            local ip = entry["IP address"] or ""
-            local mac = entry["HW address"]:upper()
-            local hostname = sys.net.hostname(ip) or ""
+    -- 方法1：使用多个命令组合获取更准确的设备信息
+    local arp_cmd = "ip -4 neighbor show 2>/dev/null | grep -v FAILED || arp -n 2>/dev/null"
+    local arp_output = sys.exec(arp_cmd)
+    
+    if arp_output and arp_output ~= "" then
+        for line in arp_output:gmatch("[^\r\n]+") do
+            local ip, mac = line:match("^(%d+%.%d+%.%d+%.%d+).-([0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F])")
             
-            -- 尝试从DHCP租约获取主机名
-            if hostname == "" then
-                local lease = sys.exec("cat /tmp/dhcp.leases 2>/dev/null | grep -i '" .. mac:lower() .. "' | head -1 | awk '{print $4}'")
-                if lease and lease ~= "" then
-                    hostname = lease:gsub("^%s*(.-)%s*$", "%1")
+            if ip and mac and mac:upper() ~= "00:00:00:00:00:00" then
+                mac = mac:upper()
+                local hostname = "未知设备"
+                
+                -- 方法1：尝试从DNS反向解析
+                local dns_result = sys.exec("nslookup " .. ip .. " 2>/dev/null | grep 'name =' | head -1")
+                if dns_result and dns_result ~= "" then
+                    local name = dns_result:match("name =%s*(.+)$")
+                    if name then
+                        name = name:gsub("%.$", "")  -- 去掉末尾的点
+                        if name ~= ip then
+                            hostname = name
+                        end
+                    end
                 end
+                
+                -- 方法2：从DHCP租约文件获取（主要方法）
+                if hostname == "未知设备" then
+                    -- 读取所有DHCP租约文件
+                    local dhcp_files = {
+                        "/tmp/dhcp.leases",
+                        "/var/dhcp.leases",
+                        "/tmp/dnsmasq.leases"
+                    }
+                    
+                    for _, dhcp_file in ipairs(dhcp_files) do
+                        if nixio.fs.access(dhcp_file) then
+                            local fd = io.open(dhcp_file, "r")
+                            if fd then
+                                for lease_line in fd:lines() do
+                                    -- 租约格式通常是：时间戳 MAC地址 IP地址 主机名 客户端ID
+                                    local parts = {}
+                                    for part in lease_line:gmatch("%S+") do
+                                        table.insert(parts, part)
+                                    end
+                                    
+                                    if #parts >= 4 then
+                                        local lease_mac = parts[2]:upper():gsub("-", ":")
+                                        local lease_ip = parts[3]
+                                        local lease_hostname = parts[4]
+                                        
+                                        -- 检查MAC或IP匹配
+                                        if (lease_mac == mac or lease_ip == ip) and 
+                                           lease_hostname and lease_hostname ~= "*" and 
+                                           lease_hostname ~= "" then
+                                            hostname = lease_hostname
+                                            fd:close()
+                                            break
+                                        end
+                                    end
+                                end
+                                fd:close()
+                            end
+                        end
+                    end
+                end
+                
+                -- 方法3：尝试从hosts文件获取
+                if hostname == "未知设备" then
+                    local hosts_content = sys.exec("cat /etc/hosts 2>/dev/null | grep -w " .. ip)
+                    if hosts_content and hosts_content ~= "" then
+                        for hosts_line in hosts_content:gmatch("[^\r\n]+") do
+                            local hosts_parts = {}
+                            for part in hosts_line:gmatch("%S+") do
+                                table.insert(hosts_parts, part)
+                            end
+                            if #hosts_parts >= 2 and hosts_parts[1] == ip then
+                                hostname = hosts_parts[2]
+                                break
+                            end
+                        end
+                    end
+                end
+                
+                -- 方法4：尝试使用netbios或LLMNR
+                if hostname == "未知设备" then
+                    -- 尝试nmblookup（如果安装了samba）
+                    local nmb_result = sys.exec("nmblookup -A " .. ip .. " 2>/dev/null | grep '<00>' | head -1")
+                    if nmb_result and nmb_result ~= "" then
+                        local nbname = nmb_result:match("^%s*(%S+)%s+")
+                        if nbname then
+                            hostname = nbname
+                        end
+                    end
+                end
+                
+                -- 检查是否已在规则中
+                local mac_in_rules = configured_devices[mac] or false
+                local ip_in_rules = configured_devices[ip] or false
+                local is_configured = mac_in_rules or ip_in_rules
+                
+                table.insert(devices, {
+                    ip = ip,
+                    mac = mac,
+                    hostname = hostname,
+                    is_configured = is_configured,
+                    mac_in_rules = mac_in_rules,
+                    ip_in_rules = ip_in_rules
+                })
             end
-            
-            table.insert(devices, {
-                ip = ip,
-                mac = mac,
-                hostname = hostname ~= "" and hostname or "未知"
-            })
         end
     end
     
-    -- 按IP地址排序
-    table.sort(devices, function(a, b)
-        local ip_to_num = function(ip)
-            local num = 0
-            for octet in ip:gmatch("(%d+)") do
-                num = num * 256 + tonumber(octet)
+    -- 如果没有获取到任何设备，尝试备用方法
+    if #devices == 0 then
+        -- 备用方法：使用cat /proc/net/arp
+        local arp_content = sys.exec("cat /proc/net/arp 2>/dev/null")
+        if arp_content and arp_content ~= "" then
+            for line in arp_content:gmatch("[^\r\n]+") do
+                -- 跳过标题行
+                if not line:match("^IP address") then
+                    local parts = {}
+                    for part in line:gmatch("%S+") do
+                        table.insert(parts, part)
+                    end
+                    
+                    if #parts >= 6 then
+                        local ip = parts[1]
+                        local mac = parts[4]:upper()
+                        local hostname = "未知设备"
+                        
+                        if mac and mac ~= "00:00:00:00:00:00" then
+                            -- 简单地从DHCP获取主机名
+                            local lease = sys.exec("cat /tmp/dhcp.leases 2>/dev/null | grep -i '" .. mac:lower() .. "' | head -1")
+                            if lease and lease ~= "" then
+                                local lease_parts = {}
+                                for part in lease:gmatch("%S+") do
+                                    table.insert(lease_parts, part)
+                                end
+                                if #lease_parts >= 4 and lease_parts[4] ~= "*" then
+                                    hostname = lease_parts[4]
+                                end
+                            end
+                            
+                            table.insert(devices, {
+                                ip = ip,
+                                mac = mac,
+                                hostname = hostname,
+                                is_configured = false
+                            })
+                        end
+                    end
+                end
             end
-            return num
         end
-        
-        local num_a = a.ip and ip_to_num(a.ip) or 0
-        local num_b = b.ip and ip_to_num(b.ip) or 0
-        return num_a < num_b
-    end)
+    end
     
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
     
-    http.write_json(devices)
+    http.write_json(devices or {})
 end
 
 function action_start()
@@ -703,14 +920,17 @@ function action_reload_rules()
 end
 
 -- 获取配置
--- 获取配置
 function action_get_config()
     local uci = require("luci.model.uci").cursor()
     local http = require("luci.http")
     
     local config = {
         log_level = uci:get("znetcontrol", "settings", "log_level") or "info",
-        control_mode = uci:get("znetcontrol", "settings", "control_mode") or "blacklist"
+        control_mode = uci:get("znetcontrol", "settings", "control_mode") or "blacklist",
+        log_auto_refresh = uci:get("znetcontrol", "settings", "log_auto_refresh") or "30",
+        log_max_lines = uci:get("znetcontrol", "settings", "log_max_lines") or "1000",
+        log_backup_enabled = uci:get("znetcontrol", "settings", "log_backup_enabled") or "0",
+        auto_refresh_enabled = uci:get("znetcontrol", "settings", "auto_refresh_enabled") or "1"
     }
     
     http.prepare_content("application/json")
@@ -742,13 +962,20 @@ function action_save_config()
             })
         end
         
-        -- 保存配置
-        if config.log_level then
-            uci:set("znetcontrol", "settings", "log_level", config.log_level)
-        end
+        -- 保存所有配置
+        local config_map = {
+            log_level = "log_level",
+            control_mode = "control_mode",
+            log_auto_refresh = "log_auto_refresh",
+            log_max_lines = "log_max_lines",
+            log_backup_enabled = "log_backup_enabled",
+            auto_refresh_enabled = "auto_refresh_enabled"
+        }
         
-        if config.control_mode then
-            uci:set("znetcontrol", "settings", "control_mode", config.control_mode)
+        for json_key, uci_key in pairs(config_map) do
+            if config[json_key] then
+                uci:set("znetcontrol", "settings", uci_key, config[json_key])
+            end
         end
         
         uci:commit("znetcontrol")
@@ -764,98 +991,3 @@ function action_save_config()
         message = "配置已保存"
     })
 end
-
--- 保存配置
-function action_save_config()
-    local uci = require("luci.model.uci").cursor()
-    local http = require("luci.http")
-    
-    -- 读取POST数据
-    local data = luci.http.content()
-    local config = luci.jsonc.parse(data)
-    
-    if config then
-        -- 创建或更新settings段
-        local section_id = uci:get("znetcontrol", "settings")
-        if not section_id then
-            uci:section("znetcontrol", "global", "settings", {
-                enabled = "1",
-                log_level = "info"
-            })
-        end
-        
-        -- 保存配置
-        if config.log_auto_refresh then
-            uci:set("znetcontrol", "settings", "log_auto_refresh", config.log_auto_refresh)
-        end
-        
-        if config.log_max_lines then
-            uci:set("znetcontrol", "settings", "log_max_lines", config.log_max_lines)
-        end
-        
-        if config.log_backup_enabled then
-            uci:set("znetcontrol", "settings", "log_backup_enabled", config.log_backup_enabled)
-        end
-        
-        if config.control_mode then
-            uci:set("znetcontrol", "settings", "control_mode", config.control_mode)
-        end
-        
-        if config.chain then
-            uci:set("znetcontrol", "settings", "chain", config.chain)
-        end
-        
-        uci:commit("znetcontrol")
-        
-        -- 重新启动服务使配置生效
-        sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
-    end
-    
-    http.prepare_content("application/json")
-    http.header("Cache-Control", "no-cache, no-store, must-revalidate")
-    http.header("Pragma", "no-cache")
-    http.header("Expires", "0")
-    
-    http.write_json({
-        success = true,
-        message = "配置已保存"
-    })
-end
-
--- 格式化运行时间函数（供视图使用）
-function format_uptime(seconds)
-    seconds = math.floor(tonumber(seconds) or 0)
-    
-    if seconds <= 0 then
-        return "0秒"
-    end
-    
-    local days = math.floor(seconds / 86400)
-    seconds = seconds % 86400
-    
-    local hours = math.floor(seconds / 3600)
-    seconds = seconds % 3600
-    
-    local minutes = math.floor(seconds / 60)
-    seconds = seconds % 60
-    
-    local parts = {}
-    
-    if days > 0 then
-        table.insert(parts, days .. "天")
-    end
-    if hours > 0 then
-        table.insert(parts, hours .. "小时")
-    end
-    if minutes > 0 then
-        table.insert(parts, minutes .. "分")
-    end
-    if seconds > 0 or #parts == 0 then
-        table.insert(parts, seconds .. "秒")
-    end
-    
-    return table.concat(parts, " ")
-end
-
-
-

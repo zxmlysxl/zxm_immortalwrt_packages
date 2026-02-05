@@ -54,46 +54,45 @@
         <button class="cbi-button cbi-button-action" onclick="refreshStatus()">
             <%:刷新状态%>
         </button>
+        <button class="cbi-button cbi-button-action" onclick="window.location.href='<%=luci.dispatcher.build_url("admin/control/znetcontrol/devices")%>'">
+        <i class="icon icon-laptop"></i> <%:查看在线设备%>
+    </button>
     </div>
 </div>
 
 <script>
 // 更快的状态刷新（修复PID显示bug）
 function refreshStatus(force = false) {
-    // 显示正在刷新
+    const statusEl = document.getElementById('service-status');
+    const pidEl = document.getElementById('service-pid');
+    
     if (force) {
-        document.getElementById('service-status').textContent = '刷新中...';
-        document.getElementById('service-status').className = 'label';
-        document.getElementById('service-pid').textContent = '--';
+        statusEl.textContent = '刷新中...';
+        statusEl.className = 'label';
+        pidEl.textContent = '--';
     }
     
-    // 使用fetch但设置超时和重试
+    // 使用更可靠的fetch配置
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_status")%>', {
         method: 'GET',
-        credentials: 'same-origin',  // 携带cookie认证
+        credentials: 'include',  // 携带cookie
         headers: {
             'Accept': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-            'X-Requested-With': 'XMLHttpRequest'  // 标记为AJAX请求
-        }
+            'Cache-Control': 'no-cache',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        timeout: 5000  // 设置超时
     })
     .then(response => {
-        // 检查响应类型
-        const contentType = response.headers.get('content-type');
-        
-        if (contentType && contentType.includes('application/json')) {
+        // 检查状态码
+        if (response.status === 200) {
             return response.json();
         } else if (response.status === 401 || response.status === 403) {
-            // 认证失败，重新登录
-            throw new Error('认证失败，请刷新页面重新登录');
+            // 认证问题，重定向到登录页
+            window.location.reload();
+            throw new Error('需要重新登录');
         } else {
-            // 响应不是JSON，尝试解析HTML错误
-            return response.text().then(text => {
-                console.error('API返回非JSON响应:', text.substring(0, 200));
-                throw new Error('API返回格式错误');
-            });
+            throw new Error('HTTP ' + response.status);
         }
     })
     .then(data => {
@@ -101,62 +100,80 @@ function refreshStatus(force = false) {
     })
     .catch(error => {
         console.error('刷新状态失败:', error);
-        // 重置显示
-        document.getElementById('service-status').textContent = '获取失败';
-        document.getElementById('service-status').className = 'label error';
-        document.getElementById('service-pid').textContent = '--';
         
-        // 如果是认证错误，提示重新登录
-        if (error.message.includes('认证失败')) {
-            alert('登录已过期，请刷新页面重新登录');
+        // 显示具体错误
+        statusEl.textContent = '连接失败';
+        statusEl.className = 'label error';
+        pidEl.textContent = '--';
+        
+        // 显示错误详情
+        document.getElementById('total-rules').textContent = '0';
+        document.getElementById('enabled-rules').textContent = '0';
+        document.getElementById('active-rules').textContent = '0';
+        
+        // 如果是网络错误，显示重试按钮
+        if (error.message.includes('network') || error.message.includes('Failed')) {
+            showRetryButton();
         }
     });
 }
 
-// 修复PID显示逻辑
 function updateStatusDisplay(data) {
-    console.log('updateStatusDisplay接收到数据:', data);
-    
     const statusEl = document.getElementById('service-status');
+    const pidEl = document.getElementById('service-pid');
     
-    // 多种方式判断running状态
-    let isRunning = false;
-    
-    if (typeof data.running === 'boolean') {
-        isRunning = data.running;
-    } else if (typeof data.running === 'string') {
-        isRunning = data.running === 'true' || data.running === '1';
-    } else if (typeof data.running === 'number') {
-        isRunning = data.running === 1;
-    }
-    
-    console.log('最终判断的running状态:', isRunning);
+    // 安全处理数据
+    const isRunning = data && (data.running === true || data.running === 'true' || data.running === '1');
     
     if (isRunning) {
-        console.log('设置为运行中');
         statusEl.textContent = '运行中';
         statusEl.className = 'label success';
     } else {
-        console.log('设置为已停止');
         statusEl.textContent = '已停止';
         statusEl.className = 'label error';
     }
     
     // PID显示
-    if (data.pid && data.pid !== "null" && data.pid !== "undefined") {
-        document.getElementById('service-pid').textContent = data.pid;
-        console.log('设置PID为:', data.pid);
+    if (data && data.pid && data.pid !== "null" && data.pid !== "undefined" && data.pid !== "") {
+        pidEl.textContent = data.pid;
     } else {
-        document.getElementById('service-pid').textContent = '--';
-        console.log('PID为空，设置为--');
+        pidEl.textContent = '--';
     }
     
     // 规则统计
-    document.getElementById('total-rules').textContent = data.total_rules || 0;
-    document.getElementById('enabled-rules').textContent = data.enabled_rules || 0;
-    document.getElementById('active-rules').textContent = data.active_rules || 0;
-    
-    console.log('显示更新完成');
+    if (data) {
+        document.getElementById('total-rules').textContent = data.total_rules || 0;
+        document.getElementById('enabled-rules').textContent = data.enabled_rules || 0;
+        document.getElementById('active-rules').textContent = data.active_rules || 0;
+    }
+}
+
+// 添加重试按钮函数
+function showRetryButton() {
+    const actions = document.querySelector('.cbi-page-actions');
+    if (actions && !document.getElementById('retry-btn')) {
+        const retryBtn = document.createElement('button');
+        retryBtn.id = 'retry-btn';
+        retryBtn.className = 'cbi-button cbi-button-reset';
+        retryBtn.textContent = '重试连接';
+        retryBtn.onclick = function() {
+            this.remove();
+            refreshStatus(true);
+        };
+        actions.appendChild(retryBtn);
+    }
+}
+
+// 防火墙检查函数
+function checkFirewallStatus() {
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/check_firewall")%>')
+        .then(response => response.json())
+        .then(result => {
+            if (!result.nft_table_exists && !result.iptables_chain_exists) {
+                console.warn('防火墙表不存在，可能需要重启服务');
+                // 可以在这里显示提示给用户
+            }
+        });
 }
 
 function restartService() {
@@ -244,3 +261,4 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 </style>
 <%+footer%>
+

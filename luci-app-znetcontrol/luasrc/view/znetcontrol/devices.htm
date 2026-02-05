@@ -1,73 +1,253 @@
 <%+header%>
 <div class="cbi-map">
     <h2 name="content"><%:在线设备%></h2>
-    <div class="cbi-map-descr"><%:当前网络中的在线设备列表%></div>
+    <div class="cbi-map-descr">
+        <%:当前网络中的在线设备列表%>
+        <br><span style="color: #007bff;"><i class="icon icon-info"></i> <%:提示：可以快速将设备添加到管控规则中%></span>
+    </div>
     
     <div class="table cbi-section-table" id="device-table">
         <div class="tr table-titles">
-            <div class="th"><%:IP地址%></div>
-            <div class="th"><%:MAC地址%></div>
-            <div class="th"><%:主机名%></div>
-            <div class="th"><%:操作%></div>
+            <div class="th" style="width: 20%;"><%:IP地址%></div>
+            <div class="th" style="width: 25%;"><%:MAC地址%></div>
+            <div class="th" style="width: 25%;"><%:主机名%></div>
+            <div class="th" style="width: 30%;"><%:管控状态%></div>
         </div>
         <div id="device-list">
-            <div class="tr">
-                <div class="td" colspan="4" style="text-align: center; padding: 20px;">
-                    <span style="color: #666;"><%:正在加载设备列表...%></span>
+            <div class="tr placeholder">
+                <div class="td" colspan="4" style="text-align: center; padding: 30px;">
+                    <div class="loading-spinner"></div>
+                    <p style="color: #666; margin-top: 10px;"><%:正在加载设备列表...%></p>
                 </div>
             </div>
         </div>
     </div>
     
-    <div class="cbi-page-actions">
-        <button class="cbi-button cbi-button-action" onclick="refreshDevices()">
-            <%:刷新列表%>
-        </button>
-        <button class="cbi-button" onclick="closeWindow()">
-            <%:关闭%>
-        </button>
+    <div class="cbi-page-actions" style="margin-top: 20px;">
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button class="cbi-button cbi-button-action" onclick="refreshDevices()">
+                <i class="icon icon-refresh"></i> <%:刷新列表%>
+            </button>
+            <button class="cbi-button cbi-button-apply" onclick="window.location.href='<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>'">
+                <i class="icon icon-settings"></i> <%:管理规则%>
+            </button>
+            <button class="cbi-button" onclick="closeWindow()">
+                <i class="icon icon-close"></i> <%:关闭%>
+            </button>
+        </div>
     </div>
 </div>
 
 <script>
 function refreshDevices() {
-    document.getElementById('device-list').innerHTML = '<div class="tr"><div class="td" colspan="4" style="text-align: center; padding: 20px;"><span style="color: #666;"><%:正在加载设备列表...%></span></div></div>';
+    const deviceList = document.getElementById('device-list');
+    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="color: #666; margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
     
-    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/get_devices")%>')
-        .then(response => response.json())
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_devices")%>')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return response.json();
+        })
         .then(devices => {
             let html = '';
             
-            if (devices.length === 0) {
-                html = '<div class="tr"><div class="td" colspan="4" style="text-align: center; padding: 20px;"><span style="color: #999;"><%:未找到在线设备%></span></div></div>';
+            if (!devices || !Array.isArray(devices) || devices.length === 0) {
+                html = '<div class="tr">' +
+                       '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
+                       '<div class="empty-state">' +
+                       '<i class="icon icon-devices" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>' +
+                       '<p style="color: #999; margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
+                       '<p style="font-size: 12px; color: #666;">请确认有设备连接到网络</p>' +
+                       '</div>' +
+                       '</div>' +
+                       '</div>';
             } else {
                 devices.forEach(device => {
-                    html += '<div class="tr">';
-                    html += '<div class="td">' + (device.ip || '未知') + '</div>';
-                    html += '<div class="td"><code>' + device.mac + '</code></div>';
-                    html += '<div class="td">' + (device.hostname || '未知') + '</div>';
-                    html += '<div class="td">';
-                    html += '<button class="cbi-button cbi-button-action" onclick="selectDevice(\'' + device.mac + '\')" style="padding: 4px 10px;">';
-                    html += '<%:选择%>';
-                    html += '</button>';
-                    html += '</div>';
-                    html += '</div>';
+                    const isConfigured = device.is_configured;
+                    const targetType = device.mac ? 'mac' : 'ip';
+                    const targetValue = device.mac || device.ip;
+                    
+                    html += '<div class="tr device-row">';
+                    
+                    // IP地址列
+                    html += '<div class="td" style="width: 20%;">' +
+                           '<div class="device-ip">' +
+                           '<code>' + (device.ip || '未知') + '</code>' +
+                           '</div>' +
+                           '</div>';
+                    
+                    // MAC地址列
+                    html += '<div class="td" style="width: 25%;">' +
+                           '<div class="device-mac">' +
+                           '<code>' + (device.mac || '') + '</code>' +
+                           '</div>' +
+                           '</div>';
+                    
+                    // 主机名列
+                    html += '<div class="td" style="width: 25%;">' +
+                           '<div class="device-hostname">' +
+                           (device.hostname || '<span style="color: #999;">未知设备</span>') +
+                           '</div>' +
+                           '</div>';
+                    
+                    // 管控状态列
+                    html += '<div class="td" style="width: 30%;">' +
+                           '<div class="device-status">';
+                    
+                    if (isConfigured) {
+                        html += '<div class="status-container configured">' +
+                               '<div class="status-icon">' +
+                               '<i class="icon icon-check-circle"></i>' +
+                               '</div>' +
+                               '<div class="status-content">' +
+                               '<div class="status-title">已添加管控</div>' +
+                               '<div class="status-action" onclick="goToRules()">点击管理规则</div>' +
+                               '</div>' +
+                               '</div>';
+                    } else {
+                        html += '<div class="status-container not-configured">' +
+                               '<button class="add-rule-btn" onclick="addToRules(\'' + targetType + '\', \'' + targetValue + '\', \'' + (device.hostname || '') + '\')">' +
+                               '<i class="icon icon-plus-circle"></i> 添加管控规则' +
+                               '</button>' +
+                               '</div>';
+                    }
+                    
+                    html += '</div></div></div>';
                 });
             }
             
-            document.getElementById('device-list').innerHTML = html;
+            deviceList.innerHTML = html;
+        })
+        .catch(error => {
+            console.error('获取设备列表失败:', error);
+            deviceList.innerHTML = '<div class="tr">' +
+                '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
+                '<div class="error-state">' +
+                '<i class="icon icon-alert-circle" style="font-size: 48px; color: #f44336; margin-bottom: 10px;"></i>' +
+                '<p style="color: #f44336; margin: 0 0 10px 0;"><%:加载失败%></p>' +
+                '<p style="font-size: 12px; color: #666; margin-bottom: 15px;">错误: ' + error.message + '</p>' +
+                '<button class="cbi-button cbi-button-action" onclick="refreshDevices()" style="padding: 8px 16px;">' +
+                '<i class="icon icon-refresh"></i> 重试' +
+                '</button>' +
+                '</div>' +
+                '</div>' +
+                '</div>';
         });
 }
 
-function selectDevice(mac) {
-    if (window.opener && !window.opener.closed) {
-        // 如果是从父窗口打开的，设置父窗口的输入框值
-        window.opener.selectDeviceFromModal(mac);
-        window.close();
-    } else {
-        // 如果是独立打开的，显示选择结果
-        alert('<%:选择的MAC地址: %>' + mac);
+function addToRules(type, target, hostname) {
+    if (!target || target === '未知') {
+        showToast('无法添加，目标地址无效', 'error');
+        return;
     }
+    
+    // 构建规则名称
+    let ruleName = '';
+    if (hostname && hostname !== '未知') {
+        ruleName = hostname;
+    } else {
+        if (type === 'mac') {
+            // 取MAC地址后6位
+            ruleName = '设备_' + target.replace(/:/g, '').substring(6);
+        } else {
+            ruleName = 'IP_' + target.replace(/\./g, '_');
+        }
+    }
+    
+    // 显示确认对话框
+    const confirmDialog = document.createElement('div');
+    confirmDialog.className = 'confirm-dialog-overlay';
+    confirmDialog.innerHTML = `
+        <div class="confirm-dialog">
+            <div class="dialog-header">
+                <i class="icon icon-shield" style="font-size: 24px; color: #007bff;"></i>
+                <h3 style="margin: 10px 0 5px 0;">添加管控规则</h3>
+            </div>
+            <div class="dialog-body">
+                <p>是否将以下设备添加到管控规则？</p>
+                <div class="device-info-card">
+                    <div><strong>目标地址:</strong> <code>${target}</code></div>
+                    <div><strong>类型:</strong> ${type === 'mac' ? 'MAC地址' : 'IP地址'}</div>
+                    <div><strong>规则名称:</strong> ${ruleName}</div>
+                </div>
+                <p style="font-size: 12px; color: #666; margin-top: 10px;">
+                    <i class="icon icon-info"></i> 添加后默认每天生效，可到规则页面调整详细设置
+                </p>
+            </div>
+            <div class="dialog-actions">
+                <button class="cbi-button" onclick="this.closest('.confirm-dialog-overlay').remove()">取消</button>
+                <button class="cbi-button cbi-button-action" onclick="confirmAddRule('${type}', '${target}', '${ruleName}')">确定添加</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(confirmDialog);
+}
+
+function confirmAddRule(type, target, ruleName) {
+    // 移除对话框
+    const dialog = document.querySelector('.confirm-dialog-overlay');
+    if (dialog) dialog.remove();
+    
+    // 显示加载状态
+    showToast('正在添加规则...', 'info');
+    
+    // 发送添加请求
+    const formData = new FormData();
+    formData.append('target', target);
+    formData.append('type', type);
+    formData.append('name', ruleName);
+    
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/quick_add")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showToast(result.message, 'success');
+            // 刷新设备列表
+            setTimeout(refreshDevices, 1000);
+            // 询问是否跳转到规则页面
+            setTimeout(() => {
+                if (confirm('规则添加成功！是否跳转到规则页面进行详细设置？')) {
+                    window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
+                }
+            }, 1500);
+        } else {
+            showToast('添加失败: ' + result.message, 'error');
+        }
+    })
+    .catch(error => {
+        console.error('添加规则失败:', error);
+        showToast('添加失败，请重试', 'error');
+    });
+}
+
+function goToRules() {
+    window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <div class="toast-content">
+            <i class="icon icon-${type === 'success' ? 'check-circle' : type === 'error' ? 'alert-circle' : 'info'}"></i>
+            <span>${message}</span>
+        </div>
+    `;
+    document.body.appendChild(toast);
+    
+    // 显示动画
+    setTimeout(() => toast.classList.add('show'), 10);
+    
+    // 3秒后自动移除
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
 
 function closeWindow() {
@@ -77,6 +257,388 @@ function closeWindow() {
         window.history.back();
     }
 }
+
+// 添加CSS样式
+const style = document.createElement('style');
+style.textContent = `
+    /* 表格样式 */
+    #device-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    /* ========== 设备表格标题行样式 ========== */
+	/* 表格容器 */
+	.table.cbi-section-table {
+	    border-radius: 8px !important;
+	    overflow: hidden !important;
+	    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+	    background: white !important;
+	    border: 1px solid #e0e0e0 !important;
+	}
+	
+	/* 标题行主样式 */
+	.tr.table-titles {
+	    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+	    color: #ffffff !important;
+	    font-weight: 600 !important;
+	    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+	    border-radius: 8px 8px 0 0 !important;
+	    overflow: hidden !important;
+	    margin: 0 !important;
+	    display: flex !important;
+	    align-items: stretch !important;
+	    min-height: 50px !important;
+	}
+	
+	/* 标题单元格统一样式 */
+	.tr.table-titles .th {
+	    display: flex !important;
+	    align-items: center !important;
+	    justify-content: flex-start !important;
+	    padding: 0 16px !important;
+	    background: transparent !important;
+	    border: none !important;
+	    color: inherit !important;
+	    font-weight: inherit !important;
+	    text-shadow: inherit !important;
+	    position: relative !important;
+	}
+	
+	/* 单元格分隔线（半透明） */
+	.tr.table-titles .th:not(:last-child)::after {
+	    content: '';
+	    position: absolute;
+	    right: 0;
+	    top: 25%;
+	    bottom: 25%;
+	    width: 1px;
+	    background: rgba(255, 255, 255, 0.3) !important;
+	}
+	
+	/* 表格内容区域样式 */
+	#device-list .tr:not(.placeholder) {
+	    border-bottom: 1px solid #f0f0f0;
+	    min-height: 55px;
+	}
+	
+	#device-list .tr:not(.placeholder):hover {
+	    background-color: #f8f9fa;
+	}
+	
+	#device-list .tr:last-child {
+	    border-bottom: none;
+	}
+	   
+    .tr {
+        display: flex;
+        width: 100%;
+        min-height: 60px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    
+    .tr:last-child {
+        border-bottom: none;
+    }
+    
+    .tr:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .th, .td {
+        padding: 12px 15px;
+        display: flex;
+        align-items: center;
+        box-sizing: border-box;
+    }
+    
+    .th {
+        font-size: 14px;
+        letter-spacing: 0.5px;
+    }
+    
+    /* 设备信息样式 */
+    .device-ip code,
+    .device-mac code {
+        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        font-size: 12px;
+        background: #f8f9fa;
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid #e9ecef;
+        color: #495057;
+    }
+    
+    .device-hostname {
+        font-weight: 500;
+        color: #212529;
+    }
+    
+    /* 状态容器样式 */
+    .status-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+    }
+    
+    .status-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    
+    .configured .status-icon {
+        background: #d4edda;
+        color: #28a745;
+    }
+    
+    .status-content {
+        flex: 1;
+    }
+    
+    .status-title {
+        font-weight: 600;
+        color: #28a745;
+        font-size: 14px;
+    }
+    
+    .status-action {
+        font-size: 12px;
+        color: #6c757d;
+        cursor: pointer;
+        transition: color 0.2s;
+        margin-top: 2px;
+    }
+    
+    .status-action:hover {
+        color: #007bff;
+        text-decoration: underline;
+    }
+    
+    /* 添加按钮样式 */
+    .add-rule-btn {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+    }
+    
+    .add-rule-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+    }
+    
+    .add-rule-btn:active {
+        transform: translateY(0);
+    }
+    
+    /* 加载动画 */
+    .loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    
+    /* 空状态样式 */
+    .empty-state,
+    .error-state {
+        padding: 20px;
+    }
+    
+    /* 确认对话框 */
+    .confirm-dialog-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(4px);
+    }
+    
+    .confirm-dialog {
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        width: 90%;
+        max-width: 400px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        animation: slideIn 0.3s ease;
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    .dialog-header {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    .dialog-body {
+        margin-bottom: 24px;
+    }
+    
+    .device-info-card {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 15px 0;
+    }
+    
+    .device-info-card div {
+        margin: 8px 0;
+        font-size: 14px;
+    }
+    
+    .dialog-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    }
+    
+    /* 消息提示 */
+    .toast {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: white;
+        border-radius: 8px;
+        padding: 12px 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateX(120%);
+        transition: transform 0.3s ease;
+        z-index: 1001;
+        min-width: 300px;
+        border-left: 4px solid #007bff;
+    }
+    
+    .toast.show {
+        transform: translateX(0);
+    }
+    
+    .toast-success {
+        border-left-color: #28a745;
+    }
+    
+    .toast-error {
+        border-left-color: #dc3545;
+    }
+    
+    .toast-info {
+        border-left-color: #17a2b8;
+    }
+    
+    .toast-content {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+        .tr {
+            flex-direction: column;
+            padding: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .th {
+            display: none;
+        }
+        
+        .td {
+            width: 100% !important;
+            padding: 8px 0;
+            border: none;
+        }
+        
+        .td:before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: #666;
+            width: 100px;
+            display: inline-block;
+            margin-right: 10px;
+            font-size: 13px;
+        }
+        
+        .device-row .td:nth-child(1):before { content: "IP地址:"; }
+        .device-row .td:nth-child(2):before { content: "MAC地址:"; }
+        .device-row .td:nth-child(3):before { content: "主机名:"; }
+        .device-row .td:nth-child(4):before { content: "管控状态:"; }
+        
+        .confirm-dialog {
+            width: 95%;
+            margin: 10px;
+        }
+    }
+    
+    /* 按钮组样式 */
+    .cbi-page-actions .cbi-button {
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+    
+    .cbi-button-action {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none;
+    }
+    
+    .cbi-button-apply {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        border: none;
+        color: white;
+    }
+    
+    .cbi-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+`;
+document.head.appendChild(style);
 
 window.onload = refreshDevices;
 </script>
