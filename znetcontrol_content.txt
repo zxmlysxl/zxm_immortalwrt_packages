@@ -1,0 +1,190 @@
+luci-app-znetcontrol
+├── luasrc
+│   ├── controller
+│   │   └── znetcontrol.lua
+│   ├── model
+│   │   └── cbi
+│   │       └── znetcontrol
+│   │           └── rules.lua
+│   └── view
+│       └── znetcontrol
+│           ├── devices.htm
+│           ├── logs.htm
+│           └── overview.htm
+├── Makefile
+├── README.md
+└── root
+    ├── etc
+    │   ├── config
+    │   │   └── znetcontrol
+    │   ├── init.d
+    │   │   └── znetcontrol
+    │   └── uci-defaults
+    │       └── luci-znetcontrol
+    └── usr
+        ├── bin
+        │   ├── znetcontrol
+        │   └── znetcontrolctrl
+        └── share
+            ├── luci
+            │   ├── applications.d
+            │   │   └── luci-app-znetcontrol.json
+            │   └── menu.d
+            │       └── luci-app-znetcontrol.json
+            └── rpcd
+                └── acl.d
+                    └── luci-app-znetcontrol.json
+
+20 directories, 15 files
+luci-app-znetcontrol
+├── luasrc
+│   ├── controller
+│   │   └── znetcontrol.lua
+│   ├── model
+│   │   └── cbi
+│   │       └── znetcontrol
+│   │           └── rules.lua
+│   └── view
+│       └── znetcontrol
+│           ├── devices.htm
+│           ├── logs.htm
+│           └── overview.htm
+├── Makefile
+├── README.md
+└── root
+    ├── etc
+    │   ├── config
+    │   │   └── znetcontrol
+    │   ├── init.d
+    │   │   └── znetcontrol
+    │   └── uci-defaults
+    │       └── luci-znetcontrol
+    └── usr
+        ├── bin
+        │   ├── znetcontrol
+        │   └── znetcontrolctrl
+        └── share
+            ├── luci
+            │   ├── applications.d
+            │   │   └── luci-app-znetcontrol.json
+            │   └── menu.d
+            │       └── luci-app-znetcontrol.json
+            └── rpcd
+                └── acl.d
+                    └── luci-app-znetcontrol.json
+
+20 directories, 15 files
+luci-app-znetcontrol
+├── luasrc
+│   ├── controller
+│   │   └── znetcontrol.lua
+│   ├── model
+│   │   └── cbi
+│   │       └── znetcontrol
+│   │           └── rules.lua
+│   └── view
+│       └── znetcontrol
+│           ├── devices.htm
+│           ├── logs.htm
+│           └── overview.htm
+├── Makefile
+├── README.md
+└── root
+    ├── etc
+    │   ├── config
+    │   │   └── znetcontrol
+    │   ├── init.d
+    │   │   └── znetcontrol
+    │   └── uci-defaults
+    │       └── luci-znetcontrol
+    └── usr
+        ├── bin
+        │   ├── znetcontrol
+        │   └── znetcontrolctrl
+        └── share
+            ├── luci
+            │   ├── applications.d
+            │   │   └── luci-app-znetcontrol.json
+            │   └── menu.d
+            │       └── luci-app-znetcontrol.json
+            └── rpcd
+                └── acl.d
+                    └── luci-app-znetcontrol.json
+
+20 directories, 15 files
+luci-app-znetcontrol
+├── luasrc
+│   ├── controller
+│   │   └── znetcontrol.lua
+│   ├── model
+│   │   └── cbi
+│   │       └── znetcontrol
+│   │           └── rules.lua
+│   └── view
+│       └── znetcontrol
+│           ├── devices.htm
+│           ├── logs.htm
+│           └── overview.htm
+├── Makefile
+├── README.md
+└── root
+    ├── etc
+    │   ├── config
+    │   │   └── znetcontrol
+    │   ├── init.d
+    │   │   └── znetcontrol
+    │   └── uci-defaults
+    │       └── luci-znetcontrol
+    └── usr
+        ├── bin
+        │   ├── znetcontrol
+        │   └── znetcontrolctrl
+        └── share
+            ├── luci
+            │   ├── applications.d
+            │   │   └── luci-app-znetcontrol.json
+            │   └── menu.d
+            │       └── luci-app-znetcontrol.json
+            └── rpcd
+                └── acl.d
+                    └── luci-app-znetcontrol.json
+
+20 directories, 15 files
+luci-app-znetcontrol
+├── luasrc
+│   ├── controller
+│   │   └── znetcontrol.lua
+│   ├── model
+│   │   └── cbi
+│   │       └── znetcontrol
+│   │           └── rules.lua
+│   └── view
+│       └── znetcontrol
+│           ├── devices.htm
+│           ├── logs.htm
+│           └── overview.htm
+├── Makefile
+├── README.md
+└── root
+    ├── etc
+    │   ├── config
+    │   │   └── znetcontrol
+    │   ├── init.d
+    │   │   └── znetcontrol
+    │   └── uci-defaults
+    │       └── luci-znetcontrol
+    └── usr
+        ├── bin
+        │   ├── znetcontrol
+        │   └── znetcontrolctrl
+        └── share
+            ├── luci
+            │   ├── applications.d
+            │   │   └── luci-app-znetcontrol.json
+            │   └── menu.d
+            │       └── luci-app-znetcontrol.json
+            └── rpcd
+                └── acl.d
+                    └── luci-app-znetcontrol.json
+
+20 directories, 15 files

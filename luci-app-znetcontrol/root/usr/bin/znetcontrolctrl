@@ -1,10 +1,21 @@
 #!/bin/sh
 
-# 基于timecontrolctrl的ZNetControl监控程序
-
 NAME=znetcontrol
 IDLIST="/var/run/$NAME.idlist"
 TMPID="/var/run/$NAME.tmpid"
+
+# 获取规则名称的辅助函数
+get_rule_name() {
+    local id=$1
+    local name=$(uci -q get znetcontrol.@device[$id].name)
+    if [ -z "$name" ] || [ "$name" = "新规则" ]; then
+        name=$(uci -q get znetcontrol.@device[$id].target)
+        if [ -z "$name" ]; then
+            name="规则$id"
+        fi
+    fi
+    echo "$name"
+}
 
 # 获取启用规则的ID
 get_enabled_rule_ids() {
@@ -99,34 +110,17 @@ update_device_status() {
     local id=$1
     local action=$2
     
-    # 获取规则详细信息
-    local name=$(config_t_get device name $id)
-    local target=$(config_t_get device target $id)
-    local chain=$(config_t_get device chain $id "forward")
-    
-    # 使用规则名称或目标地址
-    local display_name="$name"
-    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
-        display_name="$target"
-    fi
+    # 获取规则名称
+    local rule_name=$(get_rule_name $id)
     
     if [ "$action" = "add" ]; then
-        info "添加规则【$display_name】到控制列表"
         znetcontrol add $id
-        
-        # 这里只记录，不添加到IDLIST（由主脚本处理）
         echo "!${id}!" >> $IDLIST
-        
-        # 记录控制强度
-        if [ "$chain" = "input" ]; then
-            info "🔒 规则【$display_name】使用强力控制（INPUT+FORWARD）"
-        else
-            info "🔗 规则【$display_name】使用普通控制（FORWARD）"
-        fi
+        logger -t znetcontrol "【$rule_name】已添加到防火墙"
     elif [ "$action" = "del" ]; then
-        info "从控制列表移除规则【$display_name】"
         znetcontrol del $id
         sed -i "/!$id!/d" $IDLIST >/dev/null 2>&1
+        logger -t znetcontrol "【$rule_name】已从防火墙移除"
     fi
 }
 
@@ -136,19 +130,21 @@ process_devices() {
     info "开始检查设备规则..."
     
     for id in $(get_enabled_rule_ids); do
-        info "检查规则 $id"
+        local rule_name=$(get_rule_name $id)
+        info "检查【$rule_name】(ID: $id)"
+        
         if check_device $id; then
-            info "规则 $id 在生效时间内"
+            info "【$rule_name】在生效时间内"
             if ! grep -q "!${id}!" $IDLIST; then
-                info "添加规则 $id 到防火墙"
+                info "添加【$rule_name】到防火墙"
                 update_device_status $id "add"
             else
-                info "规则 $id 已在防火墙中"
+                info "【$rule_name】已在防火墙中"
             fi
         else
-            info "规则 $id 不在生效时间内"
+            info "【$rule_name】不在生效时间内"
             if grep -q "!${id}!" $IDLIST; then
-                info "从防火墙移除规则 $id"
+                info "从防火墙移除【$rule_name】"
                 update_device_status $id "del"
             fi
         fi
@@ -160,8 +156,17 @@ process_devices() {
     info "当前防火墙中的规则: $(cat $IDLIST 2>/dev/null | wc -l) 个"
 }
 
+# 日志函数
+log() {
+    local d="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[$d] $@" >>/var/log/znetcontrol.log
+}
+
+info() {
+    log "INFO: $@"
+}
+
 while :; do
     process_devices
     sleep 60
 done
-

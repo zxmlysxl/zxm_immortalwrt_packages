@@ -42,3 +42,4 @@ stop_service(){
     rm -f $LOCK 2>/dev/null
     znetcontrol stop
 }
+

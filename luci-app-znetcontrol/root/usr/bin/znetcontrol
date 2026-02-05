@@ -5,9 +5,38 @@ crid=$2
 NAME=znetcontrol
 DEBUG=0
 
+RULE_SECTION="device"
+
 NFT_TABLE="inet $NAME"
 LOG_FILE="/var/log/$NAME.log"
 CONFIG_FILE="/etc/config/$NAME"
+
+# 这些变量需要在函数外部定义
+IDLIST="/var/run/$NAME.idlist"
+TMPID="/var/run/$NAME.tmpid"
+CHAIN="forward"  # 设置默认值，后面会从配置中读取
+
+bin_nft=$(which nft 2>/dev/null)
+bin_iptables=$(which iptables 2>/dev/null)
+bin_ip6tables=$(which ip6tables 2>/dev/null)
+bin_conntrack=$(which conntrack 2>/dev/null)
+
+# 获取规则名称的辅助函数
+get_rule_display_name() {
+    local id=$1
+    local name=$(config_t_get device name "$id")
+    local target=$(config_t_get device target "$id")
+    
+    if [ -z "$name" ] || [ "$name" = "新规则" ]; then
+        if [ -n "$target" ]; then
+            name="$target"
+        else
+            name="规则$id"
+        fi
+    fi
+    
+    echo "$name"
+}
 
 config_get_type() {
     local ret=$(uci -q get "${NAME}.${1}")
@@ -31,15 +60,8 @@ config_t_set() {
     local ret=$(uci -q set "${NAME}.@${1}[${index}].${2}=${3}")
 }
 
-IDLIST="/var/run/$NAME.idlist"
-TMPID="/var/run/$NAME.tmpid"
-list_type=$(config_t_get settings control_mode 0 "blacklist")
-CHAIN=$(config_t_get settings chain 0 "forward")
-
-bin_nft=$(which nft 2>/dev/null)
-bin_iptables=$(which iptables 2>/dev/null)
-bin_ip6tables=$(which ip6tables 2>/dev/null)
-bin_conntrack=$(which conntrack 2>/dev/null)
+# 移动到函数内部或使用全局变量
+list_type="blacklist"  # 默认值
 
 is_input_chain() {
     [ "$CHAIN" = "input" ]
@@ -225,30 +247,49 @@ init_timecontrol() {
     info "初始化时间控制"
     
     if [ -n "$nftables_ver" ]; then
-        # 确保清理旧的表
-        nft delete table inet znetcontrol 2>/dev/null || true
+        # 清理所有相关表
+        nft delete table ip znetcontrol 2>/dev/null || true
+        nft delete table ip6 znetcontrol 2>/dev/null || true
+        nft delete table bridge znetcontrol 2>/dev/null || true
         
-        # 创建一个统一的inet表
-        nft add table inet znetcontrol
-        dbg "创建表 inet znetcontrol"
+        # ========== IPv4表 ==========
+        nft add table ip znetcontrol
+        nft add set ip znetcontrol blacklist_ip_input "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+        nft add set ip znetcontrol blacklist_ip_forward "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
         
-        # 只创建黑名单集合（移除了白名单相关）
-        nft add set inet znetcontrol blacklist_list "{ type ether_addr; flags interval; }" 2>/dev/null || true
-        nft add set inet znetcontrol blacklist_ip "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+        # INPUT链（强力控制）
+        nft add chain ip znetcontrol input "{ type filter hook input priority -100; policy accept; }"
+        nft add rule ip znetcontrol input ip saddr @blacklist_ip_input drop comment "block-ipv4-input"
         
-        # 创建INPUT链（用于强力控制）
-        nft add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }"
-        nft add rule inet znetcontrol input ether saddr @blacklist_list drop comment "强力控制：阻止MAC访问路由器和网络"
-        nft add rule inet znetcontrol input ip saddr @blacklist_ip drop comment "强力控制：阻止IP访问路由器和网络"
-        dbg "创建INPUT链（强力控制）"
+        # FORWARD链（普通控制）
+        nft add chain ip znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
+        nft add rule ip znetcontrol forward ip saddr @blacklist_ip_forward drop comment "block-ipv4-forward"
         
-        # 创建FORWARD链（用于普通控制）
-        nft add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
-        nft add rule inet znetcontrol forward ether saddr @blacklist_list drop comment "普通控制：阻止MAC上网"
-        nft add rule inet znetcontrol forward ip saddr @blacklist_ip drop comment "普通控制：阻止IP上网"
-        dbg "创建FORWARD链（普通控制）"
+        # ========== IPv6表 ==========
+        nft add table ip6 znetcontrol
+        nft add set ip6 znetcontrol blacklist_ip6_input "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+        nft add set ip6 znetcontrol blacklist_ip6_forward "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
         
-        info "nftables规则初始化完成，控制模式：黑名单模式"
+        nft add chain ip6 znetcontrol input "{ type filter hook input priority -100; policy accept; }"
+        nft add rule ip6 znetcontrol input ip6 saddr @blacklist_ip6_input drop comment "block-ipv6-input"
+        
+        nft add chain ip6 znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
+        nft add rule ip6 znetcontrol forward ip6 saddr @blacklist_ip6_forward drop comment "block-ipv6-forward"
+        
+        # ========== Bridge表（MAC地址） ==========
+        nft add table bridge znetcontrol
+        nft add set bridge znetcontrol blacklist_mac_input "{ type ether_addr; flags interval; }" 2>/dev/null || true
+        nft add set bridge znetcontrol blacklist_mac_forward "{ type ether_addr; flags interval; }" 2>/dev/null || true
+        
+        # Bridge INPUT链
+        nft add chain bridge znetcontrol input "{ type filter hook input priority -300; policy accept; }"
+        nft add rule bridge znetcontrol input ether saddr @blacklist_mac_input drop comment "block-mac-input"
+        
+        # Bridge FORWARD链
+        nft add chain bridge znetcontrol forward "{ type filter hook forward priority -300; policy accept; }"
+        nft add rule bridge znetcontrol forward ether saddr @blacklist_mac_forward drop comment "block-mac-forward"
+        
+        info "nftables规则初始化完成（独立表架构）"
     fi
     
     info "初始化完成"
@@ -261,13 +302,19 @@ timeadd() {
     local chain=$(config_t_get device chain "$id" "forward")
     [ -z "$target" ] && return
     
-    # 使用规则名称或目标地址
-    local display_name="$name"
-    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
-        display_name="$target"
+    # 获取显示名称
+    local display_name=$(get_rule_display_name "$id")
+    
+    # 将chain转换为中文显示
+    local chain_display=""
+    if [ "$chain" = "input" ]; then
+        chain_display="强力控制"
+    else
+        chain_display="普通控制"
     fi
     
-    info "添加设备控制: $display_name ($target)，控制强度: $chain"
+    # 修复日志显示：使用【规则名称】格式
+    info "添加设备控制: 【$display_name】($target)，控制强度: $chain_display"
     
     # 解析目标类型
     local parsed_result=$(parse_target "$target")
@@ -281,54 +328,108 @@ timeadd() {
     if [ -n "$nftables_ver" ]; then
         case "$type" in
             "mac")
-                # 添加MAC地址到黑名单集合
-                nft add element inet znetcontrol "blacklist_list" "{ $value }"
-                info "✅ 成功添加MAC到黑名单: $value"
+                # 获取IP地址
+                local device_ip=$(get_device_ip "$value")
+                
+                if [ "$chain" = "input" ]; then
+                    # 强力控制
+                    nft add element bridge znetcontrol blacklist_mac_input "{ $value }" 2>/dev/null
+                    info "✅ 【$display_name】强力控制：MAC $value 已添加到bridge input集合"
+                    
+                    if [ -n "$device_ip" ]; then
+                        nft add element ip znetcontrol blacklist_ip_input "{ $device_ip }" 2>/dev/null
+                        info "🔒 【$display_name】强力控制：同时添加IP $device_ip 到input集合"
+                    else
+                        info "⚠️ 【$display_name】强力控制：MAC $value 已添加，但未找到对应IP地址"
+                        info "💡 【$display_name】提示：如需完全阻止访问路由器，请手动添加设备IP地址"
+                    fi
+                else
+                    # 普通控制
+                    nft add element bridge znetcontrol blacklist_mac_forward "{ $value }" 2>/dev/null
+                    
+                    if [ -n "$device_ip" ]; then
+                        nft add element ip znetcontrol blacklist_ip_forward "{ $device_ip }" 2>/dev/null
+                        info "✅ 【$display_name】普通控制：MAC $value (IP: $device_ip) 已添加到bridge和ip表"
+                    else
+                        info "⚠️ 【$display_name】普通控制：MAC $value 已添加到bridge表（未找到IP，可能无法完全阻止上网）"
+                        info "💡 【$display_name】提示：如果设备仍能上网，请将设备IP地址手动添加到过滤规则"
+                        info "💡 【$display_name】手动命令：nft add element ip znetcontrol blacklist_ip_forward '{ 设备IP }'"
+                    fi
+                fi
                 ;;
             "ipv4")
-                # 添加IP地址到黑名单IP集合
+                # IPv4地址处理（保持不变）
                 case "$subtype" in
                     "single"|"range"|"cidr")
-                        nft add element inet znetcontrol "blacklist_ip" "{ $value }"
-                        info "✅ 成功添加IP到黑名单: $value"
+                        if [ "$chain" = "input" ]; then
+                            nft add element ip znetcontrol blacklist_ip_input "{ $value }" 2>/dev/null
+                        else
+                            nft add element ip znetcontrol blacklist_ip_forward "{ $value }" 2>/dev/null
+                        fi
+                        info "✅ 【$display_name】IP地址: $value (控制强度: $chain)"
                         ;;
                 esac
                 ;;
         esac
     fi
+}
+
+# 获取设备IP地址
+get_device_ip() {
+    local mac="$1"
+    local ip=""
     
-    # 应用控制强度
-    if [ "$chain" = "input" ]; then
-        # 强力控制：断开现有连接
-        flush_connections "$target"
-        
-        # 确保INPUT链规则激活
-        nft add rule inet znetcontrol input ether saddr "{ $value }" drop 2>/dev/null || true
-        nft add rule inet znetcontrol forward ether saddr "{ $value }" drop 2>/dev/null || true
-        
-        info "🔒 规则【$display_name】已应用强力控制（INPUT+FORWARD），已断开连接"
-    else
-        # 普通控制：只添加到FORWARD链
-        nft add rule inet znetcontrol forward ether saddr "{ $value }" drop 2>/dev/null || true
-        info "🔗 规则【$display_name】已应用普通控制（FORWARD）"
+    # 标准化MAC地址格式（统一为小写冒号分隔）
+    mac=$(echo "$mac" | tr '[:upper:]' '[:lower:]' | sed -e 's/-/:/g' -e 's/ //g')
+    
+    # 方法1：从ARP表获取（最准确，实时）
+    ip=$(arp -n 2>/dev/null | awk -v search_mac="$mac" '
+        BEGIN {IGNORECASE=1}
+        $3 == search_mac {print $1; exit}
+    ')
+    
+    # 方法2：从/proc/net/arp获取（备用）
+    if [ -z "$ip" ]; then
+        ip=$(cat /proc/net/arp 2>/dev/null | awk -v search_mac="$mac" '
+            BEGIN {IGNORECASE=1}
+            $4 == search_mac {print $1; exit}
+        ')
     fi
     
-    info "✅ 规则【$display_name】已添加"
+    # 方法3：从DHCP租约获取（设备可能离线）
+    if [ -z "$ip" ]; then
+        # 将MAC转换为DHCP格式（xx-xx-xx-xx-xx-xx）
+        local mac_dash=$(echo "$mac" | tr ':' '-')
+        ip=$(cat /tmp/dhcp.leases 2>/dev/null 2>/dev/null | awk -v search_mac="$mac_dash" '
+            BEGIN {IGNORECASE=1}
+            $2 == search_mac {print $3; exit}
+        ')
+    fi
+    
+    # 方法4：从conntrack连接中提取（最后手段）
+    if [ -z "$ip" ]; then
+        # 从连接跟踪中查找最近使用该MAC的连接
+        ip=$(conntrack -L 2>/dev/null | grep -i "$(echo $mac | tr ':' ' ')" | head -1 | awk '{print $5}' | cut -d= -f2)
+    fi
+    
+    # 返回结果
+    if [ -n "$ip" ]; then
+        echo "$ip"
+        return 0
+    else
+        return 1
+    fi
 }
 
 timedel() {
     local id=$1
     local target=$(config_t_get device target "$id")
     local name=$(config_t_get device name "$id")
+    local chain=$(config_t_get device chain "$id" "forward")
     [ -z "$target" ] && return
     
-    # 使用规则名称或目标地址
-    local display_name="$name"
-    if [ -z "$display_name" ] || [ "$display_name" = "新规则" ]; then
-        display_name="$target"
-    fi
-    
-    info "移除设备控制: $display_name ($target)"
+    # 获取显示名称
+    local display_name=$(get_rule_display_name "$id")
     
     # 解析目标类型
     local parsed_result=$(parse_target "$target")
@@ -342,20 +443,42 @@ timedel() {
     if [ -n "$nftables_ver" ]; then
         case "$type" in
             "mac")
-                nft delete element inet znetcontrol "${list_type}_list" "{ $value }" 2>/dev/null || true
-                info "✅ 从MAC阻止列表移除: $value"
+                if [ "$chain" = "input" ]; then
+                    nft delete element bridge znetcontrol blacklist_mac_input "{ $value }" 2>/dev/null || true
+                    info "✅ 【$display_name】从bridge input MAC列表移除: $value"
+                else
+                    nft delete element bridge znetcontrol blacklist_mac_forward "{ $value }" 2>/dev/null || true
+                    info "✅ 【$display_name】从bridge forward MAC列表移除: $value"
+                fi
                 ;;
             "ipv4")
                 case "$subtype" in
                     "single"|"range"|"cidr")
-                        nft delete element inet znetcontrol "${list_type}_ip" "{ $value }" 2>/dev/null || true
-                        info "✅ 从IP阻止列表移除: $value"
+                        if [ "$chain" = "input" ]; then
+                            nft delete element ip znetcontrol blacklist_ip_input "{ $value }" 2>/dev/null || true
+                            info "✅ 【$display_name】从ip input列表移除: $value"
+                        else
+                            nft delete element ip znetcontrol blacklist_ip_forward "{ $value }" 2>/dev/null || true
+                            info "✅ 【$display_name】从ip forward列表移除: $value"
+                        fi
+                        ;;
+                esac
+                ;;
+            "ipv6")
+                case "$subtype" in
+                    "single"|"cidr")
+                        if [ "$chain" = "input" ]; then
+                            nft delete element ip6 znetcontrol blacklist_ip6_input "{ $value }" 2>/dev/null || true
+                            info "✅ 【$display_name】从ip6 input列表移除: $value"
+                        else
+                            nft delete element ip6 znetcontrol blacklist_ip6_forward "{ $value }" 2>/dev/null || true
+                            info "✅ 【$display_name】从ip6 forward列表移除: $value"
+                        fi
                         ;;
                 esac
                 ;;
         esac
     fi
-    # 注意：这里不执行flush_connections，让规则在保存后才生效
 }
 
 check_time() {
@@ -433,17 +556,17 @@ show_status() {
     echo "├────────────────────────────────────────────┤"
     
     if [ -s "$IDLIST" ]; then
-    local device_count=$(wc -l < $IDLIST 2>/dev/null || echo "0")
-    echo "│ 控制设备数: $device_count 个                           │"
-    
+        local device_count=$(wc -l < $IDLIST 2>/dev/null || echo "0")
+        echo "│ 控制设备数: $device_count 个                           │"
+        
         echo "├────────────────────────────────────────────┤"
         echo "│ 控制中的设备:                              │"
         local count=0
         cat "$IDLIST" | sed 's/!//g' | head -5 | while read id; do
             count=$((count + 1))
             local target=$(config_t_get device target "$id")
-            local comment=$(config_t_get device comment "$id" "设备$id")
-            printf "│ %2d  %-15s %-20s     │\n" $count "$comment" "$target"
+            local display_name=$(get_rule_display_name "$id")
+            printf "│ %2d  %-15s %-20s     │\n" $count "$display_name" "$target"
         done
         
         if [ $device_count -gt 5 ]; then
@@ -473,11 +596,45 @@ show_help() {
 }
 
 get_enabled_rule_ids() {
-    # 方法1：直接读取配置文件
-    uci show znetcontrol 2>/dev/null | grep -E "\.enable='1'" | grep "\.target" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u
+    local rule_ids=""
+    local index=0
     
-    # 方法2：备用方法
-    # uci get znetcontrol.@device[0].enable 2>/dev/null | grep -q '1' && echo "0"
+    # 检查新的device段
+    while true; do
+        local enable_val=$(uci -q get znetcontrol.@device[$index].enable)
+        local target_val=$(uci -q get znetcontrol.@device[$index].target)
+        
+        if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+            break
+        fi
+        
+        if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+            rule_ids="$rule_ids $index"
+        fi
+        
+        index=$((index + 1))
+    done
+    
+    # 如果没有找到，检查旧的rule段
+    if [ -z "$rule_ids" ]; then
+        index=0
+        while true; do
+            local enable_val=$(uci -q get znetcontrol.@rule[$index].enabled)
+            local target_val=$(uci -q get znetcontrol.@rule[$index].target)
+            
+            if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
+                break
+            fi
+            
+            if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
+                rule_ids="$rule_ids $index"
+            fi
+            
+            index=$((index + 1))
+        done
+    fi
+    
+    echo $rule_ids
 }
 
 # Check if nftables/iptables is available
@@ -492,6 +649,10 @@ else
     exit 1
 fi
 
+# 从配置读取chain和list_type
+CHAIN=$(uci -q get znetcontrol.settings.chain || echo "forward")
+list_type=$(uci -q get znetcontrol.settings.control_mode || echo "blacklist")
+
 if is_input_chain; then
     StrongCHAIN=1
 else
@@ -499,65 +660,24 @@ else
 fi
 
 case "$crrun" in
-    "stop")
-        info "停止时间控制服务"
+    "start")
         stop_timecontrol
-        info "所有防火墙规则已清除"
-        ;;
-        "start")
-        stop_timecontrol
-        echo -e "\n====== 启动 ZNetControl ======" > /var/log/znetcontrol.log
+        # 修复：使用追加模式而不是覆盖
+        echo -e "\n====== 启动 ZNetControl ======" >> /var/log/znetcontrol.log
         mkdir -p /var/log /var/run 2>/dev/null
         touch "$IDLIST" 2>/dev/null
         
         info "从配置文件加载规则..."
         
-        # 获取所有启用的规则ID（修复后的方法）
-        local enabled_ids=""
-        local rule_index=0
-        
-        # 循环检查所有device段
-        while true; do
-            local enable_val=$(uci -q get znetcontrol.@device[$rule_index].enable)
-            local target_val=$(uci -q get znetcontrol.@device[$rule_index].target)
-            
-            # 如果没有更多规则，跳出循环
-            if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
-                break
-            fi
-            
-            # 如果规则启用且有目标地址
-            if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
-                info "找到启用规则 $rule_index: $target_val"
-                enabled_ids="$enabled_ids $rule_index"
-                echo "!${rule_index}!" >> "$IDLIST"
-            fi
-            
-            rule_index=$((rule_index + 1))
-        done
-        
+        # 获取所有启用的规则ID
+        enabled_ids=$(get_enabled_rule_ids)
         info "发现启用规则: $(echo $enabled_ids | wc -w) 个"
         
-        # 如果没有找到规则，检查是否有旧的rule段（兼容性）
         if [ -z "$enabled_ids" ]; then
             info "检查旧格式规则..."
-            local old_rule_index=0
-            while true; do
-                local enable_val=$(uci -q get znetcontrol.@rule[$old_rule_index].enabled)
-                local target_val=$(uci -q get znetcontrol.@rule[$old_rule_index].target)
-                
-                if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
-                    break
-                fi
-                
-                if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
-                    info "找到旧格式启用规则 $old_rule_index: $target_val"
-                    enabled_ids="$enabled_ids $old_rule_index"
-                    echo "!${old_rule_index}!" >> "$IDLIST"
-                fi
-                
-                old_rule_index=$((old_rule_index + 1))
-            done
+            RULE_SECTION="rule"
+            enabled_ids=$(get_enabled_rule_ids)
+            RULE_SECTION="device"
         fi
         
         init_timecontrol
@@ -565,16 +685,16 @@ case "$crrun" in
         # 处理每个启用规则
         if [ -n "$enabled_ids" ]; then
             for id in $enabled_ids; do
-                info "处理规则 $id"
+                # 获取规则名称
+                display_name=$(get_rule_display_name "$id")
+                
+                info "处理【$display_name】"
                 if check_list "$id"; then
                     timeadd "$id"
-                    info "✅ 设备 $id 已添加到控制列表"
+                    echo "!${id}!" >> "$IDLIST"
+                    info "✅ 【$display_name】已添加到控制列表"
                 else
-                    if grep -q "!${id}!" "$IDLIST"; then
-                        timedel "$id"
-                        sed -i "/!$id!/d" "$IDLIST"
-                        info "⏰ 设备 $id 不在生效时间，已移除"
-                    fi
+                    info "⏰ 【$display_name】不在生效时间"
                 fi
             done
         else
@@ -584,42 +704,58 @@ case "$crrun" in
         info "时间控制启动完成，控制 $(wc -l < $IDLIST 2>/dev/null || echo 0) 个设备"
         show_status
         ;;
+        
+    "stop")
+        info "停止时间控制服务"
+        stop_timecontrol
+        info "所有防火墙规则已清除"
+        ;;
+        
     "add")
         info "添加设备控制"
         for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            # 获取规则名称
+            local display_name=$(get_rule_display_name "$list")
+            
             if check_list "$list"; then
                 timeadd "$list"
                 if ! grep -q "!$list!" "$IDLIST"; then
                     echo "!$list!" >> "$IDLIST"
                 fi
-                info "设备 $list 已添加"
+                info "【$display_name】已添加"
             else
                 if grep -q "!${list}!" "$IDLIST"; then
                     timedel "$list"
                     sed -i "/!$list!/d" "$IDLIST"
-                    info "设备 $list 已移除"
+                    info "【$display_name】已移除"
                 fi
             fi
         done
         ;;
+        
     "del")
         info "移除设备控制"
         for list in $(echo "$crid" | sed -e 's/!//g' | sed 's/,/ /g'); do
+            # 获取规则名称
+            local display_name=$(get_rule_display_name "$list")
+            
             timedel "$list"
             sed -i "/!$list!/d" "$IDLIST"
-            info "设备 $list 已删除"
+            info "【$display_name】已删除"
         done
         ;;
+        
     "status")
         show_status
         ;;
+        
     "help"|"")
         show_help
         ;;
+        
     *)
         dbg "无效命令: $crrun"
         show_help
         exit 1
         ;;
 esac
-

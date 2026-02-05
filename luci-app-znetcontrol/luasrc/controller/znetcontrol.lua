@@ -182,22 +182,60 @@ function action_get_status(return_data)
     status.total_rules = total_count
     status.enabled_rules = enabled_count
 
-    -- 获取nftables中的规则数
+        -- ========== 修复：统计当前实际生效的规则数 ==========
     local active_count = 0
-    local nft_output = sys.exec("nft list table inet znetcontrol 2>/dev/null")
-    if nft_output and nft_output ~= "" then
-        -- 统计MAC地址
-        for mac in nft_output:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
-            active_count = active_count + 1
-        end
-        
-        -- 统计IP地址（排除集合名称中的数字）
-        for ip in nft_output:gmatch("(%d+%.%d+%.%d+%.%d+)") do
-            if not ip:match(":") then
-                active_count = active_count + 1
+    
+    -- 方法1：直接读取IDLIST文件（由znetcontrolctrl维护，最准确）
+    local idlist_file = "/var/run/znetcontrol.idlist"
+    if nixio.fs.access(idlist_file) then
+        local fd = io.open(idlist_file, "r")
+        if fd then
+            local count = 0
+            for line in fd:lines() do
+                -- 统计格式为 !数字! 的行
+                if line:match("^!%d+!$") then
+                    count = count + 1
+                end
+            end
+            fd:close()
+            active_count = count
+        else
+            -- 如果无法打开文件，尝试用系统命令统计
+            local count_cmd = [[cat /var/run/znetcontrol.idlist 2>/dev/null | grep -c '^![0-9]\+!$' || echo "0"]]
+            local count_result = sys.exec(count_cmd)
+            if count_result and count_result ~= "" then
+                active_count = tonumber(count_result) or 0
             end
         end
     end
+    
+    -- 方法2：如果IDLIST文件不存在或无法读取，使用备用方法
+    if active_count == 0 then
+        -- 检查是否有任何规则在nftables中
+        local check_cmd = [=[
+            # 简单检查nftables中是否有znetcontrol规则
+            if nft list table ip znetcontrol 2>/dev/null | grep -q "elements = {[^}]*[^[:space:]]" || \
+               nft list table bridge znetcontrol 2>/dev/null | grep -q "elements = {[^}]*[^[:space:]]"; then
+                # 有规则但无法精确统计，检查IDLIST文件
+                if [ -f "/var/run/znetcontrol.idlist" ]; then
+                    wc -l < "/var/run/znetcontrol.idlist" 2>/dev/null || echo "0"
+                else
+                    echo "1"  # 至少有一个规则在生效
+                fi
+            else
+                echo "0"
+            fi
+        ]=]
+        
+        local check_result = sys.exec(check_cmd)
+        if check_result and check_result ~= "" then
+            local check_count = tonumber(check_result) or 0
+            if check_count > 0 then
+                active_count = check_count
+            end
+        end
+    end
+    
     status.active_rules = active_count
 
     -- ========== 自动服务管理 ==========
@@ -818,4 +856,6 @@ function format_uptime(seconds)
     
     return table.concat(parts, " ")
 end
+
+
 

@@ -5,7 +5,8 @@ local http = require("luci.http")
 m = Map("znetcontrol", translate("上网管控规则"), 
     translate("为设备设置上网时间管控规则，支持按IP地址或MAC地址、时间段和日期进行精确控制") .. 
     "<br><span style='color: #ff6b6b;'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>" ..
-    "<br><span style='color: #007bff;'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>")
+    "<br><span style='color: #007bff;'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>" ..
+    "<br><span style='color: #28a745;'>支持格式：1.单个IP: 192.168.32.10 2. IP范围: 192.168.32.10-192.168.32.100 3. CIDR: 192.168.32.10/24 4. MAC地址: 00:11:22:33:44:55</span>")
 
 -- ========== 新增：检查启用规则数量并管理服务 ==========
 local function manage_service_by_rules()
@@ -67,23 +68,6 @@ s.template = "cbi/tblsection"
 s.anonymous = true
 s.addremove = true
 s.sortable = true
-
--- ========== 处理规则删除时的延迟生效 ==========
-local old_remove = s.remove
-function s.remove(self, section)
-    -- 标记为待删除，但不立即执行
-    self.removed_sections = self.removed_sections or {}
-    table.insert(self.removed_sections, section)
-    
-    -- 从界面移除
-    if old_remove then
-        old_remove(self, section)
-    else
-        TypedSection.remove(self, section)
-    end
-    
-    return true
-end
 
 -- 规则名称
 name = s:option(Value, "name", translate("规则名称"))
@@ -331,18 +315,33 @@ function s.create(self, section)
     return section_id
 end
 
--- ========== 修复：应用配置时的处理 ==========
-function m.on_after_commit(self)
-    -- 处理标记为删除的规则
-    if s.removed_sections and #s.removed_sections > 0 then
-        for _, section in ipairs(s.removed_sections) do
-            uci:delete("znetcontrol", section)
-        end
-        s.removed_sections = nil
+-- ========== 添加删除规则延迟生效逻辑 ==========
+local original_remove = s.remove
+function s.remove(self, section)
+    -- 标记为待删除，但不立即从UCI删除
+    -- 只从界面移除，实际删除在保存时进行
+    if original_remove then
+        original_remove(self, section)
+    else
+        TypedSection.remove(self, section)
     end
     
-    -- 提交配置到文件
-    uci:commit("znetcontrol")
+    -- 记录需要删除的规则
+    self.pending_deletions = self.pending_deletions or {}
+    table.insert(self.pending_deletions, section)
+    
+    return true
+end
+
+-- ========== 修复：应用配置时的处理 ==========
+function m.on_after_commit(self)
+    -- 处理待删除的规则
+    if s.pending_deletions and #s.pending_deletions > 0 then
+        for _, section_id in ipairs(s.pending_deletions) do
+            uci:delete("znetcontrol", section_id)
+        end
+        s.pending_deletions = nil
+    end
     
     return true
 end
@@ -354,13 +353,20 @@ function m.on_after_apply(self)
     -- 根据规则数量控制服务
     local enabled_count, service_running = manage_service_by_rules()
     
-    -- 记录日志
+    -- 立即重新加载规则，不等待监控进程
     if service_running then
-        sys.call('logger -t znetcontrol "规则已保存并应用，发现 ' .. enabled_count .. ' 条启用规则，服务已重启"')
-        -- 重新启动服务使配置生效（包括删除的规则）
-        sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1")
+        -- 停止并重新启动服务（立即生效）
+        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
+        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
+        sys.call('logger -t znetcontrol "规则已保存并立即生效，发现 ' .. enabled_count .. ' 条启用规则"')
     else
-        sys.call('logger -t znetcontrol "规则已保存并应用，没有启用规则，服务已停止"')
+        sys.call('logger -t znetcontrol "规则已保存，没有启用规则，服务已停止"')
+        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
+    end
+    
+    -- 清空待删除列表
+    if s.pending_deletions then
+        s.pending_deletions = nil
     end
     
     -- 不执行默认的重定向，让LuCI显示成功消息
