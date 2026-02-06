@@ -135,6 +135,12 @@ start_service() {
     procd_close_instance
     
     echo "服务配置完成"
+
+    # ========== 新增：等待2秒让服务启动，然后显示状态 ==========
+    sleep 2
+    echo ""
+    echo "服务状态："
+    /usr/bin/znetcontrol status
 }
 
 stop_service() {
@@ -181,3 +187,4 @@ reload_service() {
 service_triggers() {
     procd_add_reload_trigger "znetcontrol"
 }
+

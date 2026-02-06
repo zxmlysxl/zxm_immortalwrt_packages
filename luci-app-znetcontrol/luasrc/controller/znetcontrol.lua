@@ -1,5 +1,33 @@
 module("luci.controller.znetcontrol", package.seeall)
 
+-- 辅助日志函数（如果不存在）
+local function log(message, data)
+    local nixio = require("nixio")
+    local logfile = "/var/log/znetcontrol.log"
+    
+    -- 创建日志目录
+    os.execute("mkdir -p /var/log 2>/dev/null")
+    
+    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    local log_entry = string.format("[%s] %s", timestamp, message)
+    
+    if data then
+        if type(data) == "table" then
+            for k, v in pairs(data) do
+                log_entry = log_entry .. string.format(" %s=%s", k, tostring(v))
+            end
+        else
+            log_entry = log_entry .. " " .. tostring(data)
+        end
+    end
+    
+    local fd = io.open(logfile, "a")
+    if fd then
+        fd:write(log_entry .. "\n")
+        fd:close()
+    end
+end
+
 -- 版本检测函数（不使用版本文件）
 function get_app_version()
     local nixio = require("nixio")
@@ -84,6 +112,13 @@ function action_quick_add()
     local target_type = data and data.type  -- "mac" 或 "ip"
     local name = data and data.name
     
+    -- 调试日志
+    log("快速添加规则 - 接收参数:", {
+        target = target,
+        type = target_type,
+        name = name
+    })
+    
     if not target then
         http.write_json({
             success = false,
@@ -93,58 +128,98 @@ function action_quick_add()
     end
     
     -- 标准化目标地址
+    local original_target = target
     target = target:upper():gsub("%s+", ""):gsub("-", ":")
     
     -- 检查是否已存在相同规则
     local exists = false
+    local existing_name = ""
     uci:foreach("znetcontrol", "device", function(s)
         if s.target and s.target:upper():gsub("%s+", ""):gsub("-", ":") == target then
             exists = true
+            existing_name = s.name or "未命名规则"
         end
     end)
     
     if exists then
         http.write_json({
             success = false,
-            message = "该设备已在规则中"
+            message = "该设备已在规则中（规则名称: " .. existing_name .. "）"
         })
         return
     end
     
     -- 生成规则名称
-    if not name or name == "" then
+    if not name or name == "" or name == "undefined" then
+        -- 前端没有传名称，则生成一个
         if target_type == "mac" then
-            -- 尝试从DHCP获取主机名
-            local dhcp_lease = sys.exec("cat /tmp/dhcp.leases 2>/dev/null | grep -i '" .. target:lower() .. "' | head -1")
-            if dhcp_lease and dhcp_lease ~= "" then
-                local parts = {}
-                for part in dhcp_lease:gmatch("%S+") do
-                    table.insert(parts, part)
-                end
-                if #parts >= 4 and parts[4] ~= "*" then
-                    name = parts[4]
-                end
-            end
-            name = name or "MAC设备_" .. target:sub(13)
+            local mac_clean = target:gsub(":", ""):gsub("-", "")
+            local suffix = mac_clean:sub(-6) or "未知"
+            name = "设备_" .. suffix
+            log("生成MAC规则名称:", name)
         else
-            name = "IP设备_" .. target
+            name = "IP_" .. target:gsub("%.", "_")
+            log("生成IP规则名称:", name)
         end
     end
     
-    -- 创建新规则
+    -- 清理规则名称
+    local original_name = name
+    
+    -- 移除常见的域名后缀
+    name = name:gsub("%.lan$", "")
+    name = name:gsub("%.local$", "")
+    name = name:gsub("%.home$", "")
+    name = name:gsub("%.domain$", "")
+    name = name:gsub("%.com$", "")
+    name = name:gsub("%.net$", "")
+    name = name:gsub("%.org$", "")
+    
+    -- 清理特殊字符（防止注入和安全问题）
+    name = name:gsub("[<>\"'`]", "")
+    
+    -- 限制名称长度
+    if #name > 50 then
+        name = name:sub(1, 50)
+    end
+    
+    -- 确保名称不为空
+    if name == "" then
+        if target_type == "mac" then
+            local mac_clean = target:gsub(":", ""):gsub("-", "")
+            local suffix = mac_clean:sub(-6) or "未知"
+            name = "设备_" .. suffix
+        else
+            name = "IP_" .. target:gsub("%.", "_")
+        end
+    end
+    
+    log("清理后规则名称:", name, "（原始:", original_name .. "）")
+    
+    -- 创建新规则 - 添加默认的开始时间和结束时间
     local section_id = uci:section("znetcontrol", "device", nil, {
         name = name,
         target = target,
         enable = "1",
         week = "0",  -- 默认每天
         chain = "forward",  -- 默认普通控制
+        timestart = "00:00",  -- 默认开始时间
+        timeend = "00:00",    -- 默认结束时间（表示全天）
         comment = "从在线设备页面快速添加"
     })
     
     uci:commit("znetcontrol")
     
+    -- 记录日志
+    log("规则添加成功", {
+        id = section_id,
+        name = name,
+        target = target,
+        original_target = original_target
+    })
+    
     -- 重新启动服务使规则生效
-    sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
+    local restart_result = sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
     
     http.write_json({
         success = true,
@@ -923,4 +998,5 @@ function action_save_config()
         message = "配置已保存"
     })
 end
+
 

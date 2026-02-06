@@ -39,6 +39,20 @@
 </div>
 
 <script>
+// 转义函数，防止JavaScript注入和语法错误
+function escapeForJs(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function refreshDevices() {
     const deviceList = document.getElementById('device-list');
     deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="color: #666; margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
@@ -68,6 +82,11 @@ function refreshDevices() {
                     const isConfigured = device.is_configured;
                     const targetType = device.mac ? 'mac' : 'ip';
                     const targetValue = device.mac || device.ip;
+                    const hostname = device.hostname || '';
+                    
+                    // 转义特殊字符
+                    const safeTarget = escapeForJs(targetValue);
+                    const safeHostname = escapeForJs(hostname);
                     
                     html += '<div class="tr device-row">';
                     
@@ -88,7 +107,7 @@ function refreshDevices() {
                     // 主机名列
                     html += '<div class="td" style="width: 25%;">' +
                            '<div class="device-hostname">' +
-                           (device.hostname || '<span style="color: #999;">未知设备</span>') +
+                           (hostname || '<span style="color: #999;">未知设备</span>') +
                            '</div>' +
                            '</div>';
                     
@@ -107,8 +126,9 @@ function refreshDevices() {
                                '</div>' +
                                '</div>';
                     } else {
+                        // 使用安全的 onclick 绑定
                         html += '<div class="status-container not-configured">' +
-                               '<button class="add-rule-btn" onclick="addToRules(\'' + targetType + '\', \'' + targetValue + '\', \'' + (device.hostname || '') + '\')">' +
+                               '<button class="add-rule-btn" onclick="addToRules(\'' + targetType + '\', \'' + safeTarget + '\', \'' + safeHostname + '\')">' +
                                '<i class="icon icon-plus-circle"></i> 添加管控规则' +
                                '</button>' +
                                '</div>';
@@ -138,25 +158,44 @@ function refreshDevices() {
 }
 
 function addToRules(type, target, hostname) {
+    console.log('添加规则:', { type, target, hostname });
+    
     if (!target || target === '未知') {
         showToast('无法添加，目标地址无效', 'error');
         return;
     }
     
-    // 构建规则名称
+    // ========== 修复：清理输入数据 ==========
+    // 清理换行符和多余空格
+    hostname = (hostname || '').trim().replace(/\n/g, '');
+    target = (target || '').trim().replace(/\n/g, '');
+    
+    // 判断是否使用主机名
+    const invalidHostnames = ['未知', '未知设备', 'unknown', '*', ''];
+    const isHostnameValid = hostname && 
+                           !invalidHostnames.includes(hostname) && 
+                           hostname !== target;
+    
     let ruleName = '';
-    if (hostname && hostname !== '未知') {
-        ruleName = hostname;
+    if (isHostnameValid) {
+        // 清理主机名中的换行符和域名后缀
+        ruleName = hostname.replace(/\.lan$/i, '')
+                          .replace(/\.local$/i, '')
+                          .replace(/\.home$/i, '')
+                          .replace(/\n/g, '')
+                          .trim();
     } else {
         if (type === 'mac') {
-            // 取MAC地址后6位
-            ruleName = '设备_' + target.replace(/:/g, '').substring(6);
+            const macClean = target.replace(/:/g, '').replace(/-/g, '').toUpperCase();
+            ruleName = '设备_' + (macClean.substring(macClean.length - 6) || '未知');
         } else {
             ruleName = 'IP_' + target.replace(/\./g, '_');
         }
     }
     
-    // 显示确认对话框
+    console.log('生成的规则名称:', ruleName);
+    
+    // 显示确认对话框 - 使用数据属性而不是 onclick
     const confirmDialog = document.createElement('div');
     confirmDialog.className = 'confirm-dialog-overlay';
     confirmDialog.innerHTML = `
@@ -166,23 +205,43 @@ function addToRules(type, target, hostname) {
                 <h3 style="margin: 10px 0 5px 0;">添加管控规则</h3>
             </div>
             <div class="dialog-body">
-                <p>是否将以下设备添加到管控规则？</p>
+                <p>是否添加以下管控规则？</p>
                 <div class="device-info-card">
                     <div><strong>目标地址:</strong> <code>${target}</code></div>
                     <div><strong>类型:</strong> ${type === 'mac' ? 'MAC地址' : 'IP地址'}</div>
                     <div><strong>规则名称:</strong> ${ruleName}</div>
                 </div>
-                <p style="font-size: 12px; color: #666; margin-top: 10px;">
-                    <i class="icon icon-info"></i> 添加后默认每天生效，可到规则页面调整详细设置
-                </p>
             </div>
             <div class="dialog-actions">
-                <button class="cbi-button" onclick="this.closest('.confirm-dialog-overlay').remove()">取消</button>
-                <button class="cbi-button cbi-button-action" onclick="confirmAddRule('${type}', '${target}', '${ruleName}')">确定添加</button>
+                <button class="cbi-button cancel-btn">取消</button>
+                <button class="cbi-button cbi-button-action confirm-btn" 
+                        data-type="${type}" 
+                        data-target="${target}" 
+                        data-rulename="${ruleName}">确定添加</button>
             </div>
         </div>
     `;
     document.body.appendChild(confirmDialog);
+    
+    // 绑定对话框事件
+    setTimeout(() => {
+        const dialog = document.querySelector('.confirm-dialog-overlay');
+        if (dialog) {
+            // 取消按钮
+            dialog.querySelector('.cancel-btn').addEventListener('click', function() {
+                dialog.remove();
+            });
+            
+            // 确定按钮
+            dialog.querySelector('.confirm-btn').addEventListener('click', function() {
+                const type = this.getAttribute('data-type');
+                const target = this.getAttribute('data-target');
+                const ruleName = this.getAttribute('data-rulename');
+                dialog.remove();
+                confirmAddRule(type, target, ruleName);
+            });
+        }
+    }, 10);
 }
 
 function confirmAddRule(type, target, ruleName) {
@@ -192,6 +251,12 @@ function confirmAddRule(type, target, ruleName) {
     
     // 显示加载状态
     showToast('正在添加规则...', 'info');
+    
+    // 清理数据
+    target = (target || '').trim();
+    ruleName = (ruleName || '').trim().replace(/\n/g, '');
+    
+    console.log('提交数据:', { target, type, name: ruleName });
     
     // 发送添加请求
     const formData = new FormData();
@@ -203,25 +268,44 @@ function confirmAddRule(type, target, ruleName) {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log('响应状态:', response.status, response.statusText);
+        
+        if (response.status >= 500) {
+            throw new Error(`服务器错误 (${response.status})`);
+        }
+        
+        return response.text().then(text => {
+            console.log('响应文本:', text);
+            
+            if (!text) {
+                throw new Error('服务器返回空响应');
+            }
+            
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                console.error('JSON解析错误:', e);
+                throw new Error(`服务器响应格式错误: ${text.substring(0, 100)}`);
+            }
+        });
+    })
     .then(result => {
+        console.log('添加结果:', result);
         if (result.success) {
-            showToast(result.message, 'success');
-            // 刷新设备列表
-            setTimeout(refreshDevices, 1000);
-            // 询问是否跳转到规则页面
+            showToast('规则添加成功，正在跳转到管控规则页面...', 'success');
+            
+            // 2秒后自动跳转到规则页面
             setTimeout(() => {
-                if (confirm('规则添加成功！是否跳转到规则页面进行详细设置？')) {
-                    window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
-                }
-            }, 1500);
+                window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
+            }, 2000);
         } else {
-            showToast('添加失败: ' + result.message, 'error');
+            showToast('添加失败: ' + (result.message || '未知错误'), 'error');
         }
     })
     .catch(error => {
         console.error('添加规则失败:', error);
-        showToast('添加失败，请重试', 'error');
+        showToast('添加失败: ' + error.message, 'error');
     });
 }
 
@@ -272,69 +356,65 @@ style.textContent = `
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* ========== 设备表格标题行样式 ========== */
-	/* 表格容器 */
-	.table.cbi-section-table {
-	    border-radius: 8px !important;
-	    overflow: hidden !important;
-	    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
-	    background: white !important;
-	    border: 1px solid #e0e0e0 !important;
-	}
-	
-	/* 标题行主样式 */
-	.tr.table-titles {
-	    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-	    color: #ffffff !important;
-	    font-weight: 600 !important;
-	    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
-	    border-radius: 8px 8px 0 0 !important;
-	    overflow: hidden !important;
-	    margin: 0 !important;
-	    display: flex !important;
-	    align-items: stretch !important;
-	    min-height: 50px !important;
-	}
-	
-	/* 标题单元格统一样式 */
-	.tr.table-titles .th {
-	    display: flex !important;
-	    align-items: center !important;
-	    justify-content: flex-start !important;
-	    padding: 0 16px !important;
-	    background: transparent !important;
-	    border: none !important;
-	    color: inherit !important;
-	    font-weight: inherit !important;
-	    text-shadow: inherit !important;
-	    position: relative !important;
-	}
-	
-	/* 单元格分隔线（半透明） */
-	.tr.table-titles .th:not(:last-child)::after {
-	    content: '';
-	    position: absolute;
-	    right: 0;
-	    top: 25%;
-	    bottom: 25%;
-	    width: 1px;
-	    background: rgba(255, 255, 255, 0.3) !important;
-	}
-	
-	/* 表格内容区域样式 */
-	#device-list .tr:not(.placeholder) {
-	    border-bottom: 1px solid #f0f0f0;
-	    min-height: 55px;
-	}
-	
-	#device-list .tr:not(.placeholder):hover {
-	    background-color: #f8f9fa;
-	}
-	
-	#device-list .tr:last-child {
-	    border-bottom: none;
-	}
-	   
+    /* 表格标题行样式 */
+    .table.cbi-section-table {
+        border-radius: 8px !important;
+        overflow: hidden !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+        background: white !important;
+        border: 1px solid #e0e0e0 !important;
+    }
+    
+    .tr.table-titles {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+        border-radius: 8px 8px 0 0 !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: stretch !important;
+        min-height: 50px !important;
+    }
+    
+    .tr.table-titles .th {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        padding: 0 16px !important;
+        background: transparent !important;
+        border: none !important;
+        color: inherit !important;
+        font-weight: inherit !important;
+        text-shadow: inherit !important;
+        position: relative !important;
+    }
+    
+    .tr.table-titles .th:not(:last-child)::after {
+        content: '';
+        position: absolute;
+        right: 0;
+        top: 25%;
+        bottom: 25%;
+        width: 1px;
+        background: rgba(255, 255, 255, 0.3) !important;
+    }
+    
+    /* 表格内容区域样式 */
+    #device-list .tr:not(.placeholder) {
+        border-bottom: 1px solid #f0f0f0;
+        min-height: 55px;
+    }
+    
+    #device-list .tr:not(.placeholder):hover {
+        background-color: #f8f9fa;
+    }
+    
+    #device-list .tr:last-child {
+        border-bottom: none;
+    }
+       
     .tr {
         display: flex;
         width: 100%;
@@ -640,6 +720,18 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-window.onload = refreshDevices;
+// 页面加载时初始化
+window.onload = function() {
+    refreshDevices();
+    
+    // 添加调试日志
+    console.log('设备页面已加载');
+    
+    // 添加全局错误捕获
+    window.addEventListener('error', function(e) {
+        console.error('页面发生错误:', e.error);
+        console.error('错误位置:', e.filename, ':', e.lineno);
+    });
+};
 </script>
 <%+footer%>
