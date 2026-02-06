@@ -1,7 +1,12 @@
 <%+header%>
 <div class="cbi-map">
     <h2 name="content"><%:佐罗上网管控%></h2>
-    <div class="cbi-map-descr"><%:基于MAC地址的网络访问时间管控系统%></div>
+    <div class="cbi-map-descr">
+        <%:基于MAC地址的网络访问时间管控系统%>
+        <br><span style="color: #28a745; font-size: 14px;">
+            <i class="icon icon-check"></i> <%:能自动判断并切换主/旁路由模式%>
+        </span>
+    </div>
     
     <fieldset class="cbi-section">
         <legend><%:系统状态%></legend>
@@ -146,6 +151,7 @@ function updateStatusDisplay(data) {
         document.getElementById('enabled-rules').textContent = data.enabled_rules || 0;
         document.getElementById('active-rules').textContent = data.active_rules || 0;
     }
+    setTimeout(checkFirewallStatus, 1000);
 }
 
 // 添加重试按钮函数
@@ -166,12 +172,12 @@ function showRetryButton() {
 
 // 防火墙检查函数
 function checkFirewallStatus() {
-    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/check_firewall")%>')
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/firewall_status")%>')
         .then(response => response.json())
         .then(result => {
-            if (!result.nft_table_exists && !result.iptables_chain_exists) {
-                console.warn('防火墙表不存在，可能需要重启服务');
-                // 可以在这里显示提示给用户
+            // 如果找到标记表，更新状态显示
+            if (result.tables_found && result.tables_found["inet znetcontrol_mark"]) {
+                console.log('MAC标记表存在，标记MAC数量:', result.mac_marked_count || 0);
             }
         });
 }
@@ -261,4 +267,5 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 </style>
 <%+footer%>
+
 

@@ -1,10 +1,9 @@
-#!/bin/sh
+#!/bin/bash
 
 NAME=znetcontrol
 IDLIST="/var/run/$NAME.idlist"
 TMPID="/var/run/$NAME.tmpid"
 
-# 获取规则名称的辅助函数
 get_rule_name() {
     local id=$1
     local name=$(uci -q get znetcontrol.@device[$id].name)
@@ -17,15 +16,13 @@ get_rule_name() {
     echo "$name"
 }
 
-# 获取启用规则的ID
 get_enabled_rule_ids() {
     local rule_ids=""
     local index=0
     
-    # 检查新的device段
     while true; do
-        local enable_val=$(uci -q get znetcontrol.@device[$index].enable)
-        local target_val=$(uci -q get znetcontrol.@device[$index].target)
+        local enable_val=$(uci -q get "znetcontrol.@device[$index].enable")
+        local target_val=$(uci -q get "znetcontrol.@device[$index].target")
         
         if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
             break
@@ -38,58 +35,69 @@ get_enabled_rule_ids() {
         index=$((index + 1))
     done
     
-    # 如果没有找到，检查旧的rule段
-    if [ -z "$rule_ids" ]; then
-        index=0
-        while true; do
-            local enable_val=$(uci -q get znetcontrol.@rule[$index].enabled)
-            local target_val=$(uci -q get znetcontrol.@rule[$index].target)
-            
-            if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
-                break
-            fi
-            
-            if [ "$enable_val" = "1" ] && [ -n "$target_val" ]; then
-                rule_ids="$rule_ids $index"
-            fi
-            
-            index=$((index + 1))
-        done
-    fi
-    
     echo $rule_ids
 }
 
 config_t_get() {
+    local section=$1
+    local option=$2
     local index=${3:-0}
-    local ret=$(uci -q get "${NAME}.@${1}[${index}].${2}")
-    echo "${ret:=${4}}"
+    
+    local value=$(uci -q get "znetcontrol.@${section}[${index}].${option}")
+    echo "$value"
 }
 
+# 使用数值计算的时间判断函数
 is_time_in_range() {
     local start_time=$1
     local end_time=$2
-    local current_time=$(date +%H:%M)
-
+    
+    # 处理空值
+    start_time=${start_time:-00:00}
+    end_time=${end_time:-23:59}
+    
+    # 获取当前时间
+    local current_hour=$(date +%H)
+    local current_minute=$(date +%M)
+    local current_total=$((10#$current_hour * 60 + 10#$current_minute))
+    
+    # 转换开始时间
+    local start_hour=${start_time%:*}
+    local start_minute=${start_time#*:}
+    local start_total=$((10#$start_hour * 60 + 10#$start_minute))
+    
+    # 转换结束时间
+    local end_hour=${end_time%:*}
+    local end_minute=${end_time#*:}
+    local end_total=$((10#$end_hour * 60 + 10#$end_minute))
+    
+    # 如果是全天
     if [ "$start_time" = "$end_time" ]; then
-        return 0 
-    elif [ "$start_time" \< "$end_time" ]; then
-        [ "$current_time" \> "$start_time" ] && [ "$current_time" \< "$end_time" ] && return 0
+        return 0  # 全天生效
+    elif [ $start_total -lt $end_total ]; then
+        # 正常时间段（不跨天）
+        # 包含开始时间，不包含结束时间
+        [ $current_total -ge $start_total ] && [ $current_total -lt $end_total ] && return 0
     else
-        [ "$current_time" \> "$start_time" ] || [ "$current_time" \< "$end_time" ] && return 0
+        # 跨天时间段
+        [ $current_total -ge $start_total ] || [ $current_total -lt $end_total ] && return 0
     fi
+    
     return 1
 }
 
 is_weekday_in_range() {
     local configured_weekdays=$1
-    local current_weekday=$(date +%u)
-
-    for ww in $(echo $configured_weekdays | sed 's/,/ /g'); do
-        if [ "$current_weekday" = "$ww" ] || [ "$ww" = "0" ]; then
-            return 0
-        fi
+    local current_weekday=$(date +%u)  # 1=星期一, 7=星期日
+    
+    # 如果配置为"0"，表示每天
+    [ "$configured_weekdays" = "0" ] && return 0
+    
+    # 检查逗号分隔的列表
+    for ww in $(echo $configured_weekdays | tr ',' ' '); do
+        [ "$current_weekday" = "$ww" ] && return 0
     done
+    
     return 1
 }
 
@@ -98,19 +106,19 @@ check_device() {
     local start_time=$(config_t_get device timestart $id)
     local end_time=$(config_t_get device timeend $id)
     local weekdays=$(config_t_get device week $id)
-
-    if is_weekday_in_range "$weekdays" && is_time_in_range "$start_time" "$end_time"; then
-        return 0  
-    else
-        return 1 
-    fi
+    local enable_val=$(config_t_get device enable $id)
+    
+    # 检查是否启用
+    [ "$enable_val" != "1" ] && return 1
+    
+    # 检查星期和时间
+    is_weekday_in_range "$weekdays" && is_time_in_range "$start_time" "$end_time"
 }
 
 update_device_status() {
     local id=$1
     local action=$2
     
-    # 获取规则名称
     local rule_name=$(get_rule_name $id)
     
     if [ "$action" = "add" ]; then
@@ -127,46 +135,42 @@ update_device_status() {
 process_devices() {
     [ -s $IDLIST ] || touch $IDLIST
     
-    info "开始检查设备规则..."
+    log "开始检查设备规则..."
     
-    for id in $(get_enabled_rule_ids); do
+    # 获取当前启用的规则ID
+    local enabled_ids=$(get_enabled_rule_ids)
+    
+    for id in $enabled_ids; do
         local rule_name=$(get_rule_name $id)
-        info "检查【$rule_name】(ID: $id)"
         
         if check_device $id; then
-            info "【$rule_name】在生效时间内"
+            log "【$rule_name】在生效时间内"
             if ! grep -q "!${id}!" $IDLIST; then
-                info "添加【$rule_name】到防火墙"
+                log "添加【$rule_name】到防火墙"
                 update_device_status $id "add"
-            else
-                info "【$rule_name】已在防火墙中"
             fi
         else
-            info "【$rule_name】不在生效时间内"
+            log "【$rule_name】不在生效时间内"
             if grep -q "!${id}!" $IDLIST; then
-                info "从防火墙移除【$rule_name】"
+                log "从防火墙移除【$rule_name】"
                 update_device_status $id "del"
             fi
         fi
     done
 
-    cat $IDLIST | sort | uniq > $TMPID 2>/dev/null
-    mv $TMPID $IDLIST 2>/dev/null
+    # 清理并排序ID列表
+    cat $IDLIST 2>/dev/null | sort | uniq > $TMPID 2>/dev/null
+    [ -f $TMPID ] && mv $TMPID $IDLIST 2>/dev/null
     
-    info "当前防火墙中的规则: $(cat $IDLIST 2>/dev/null | wc -l) 个"
+    log "当前防火墙中的规则: $(cat $IDLIST 2>/dev/null | wc -l) 个"
 }
 
-# 日志函数
 log() {
     local d="$(date '+%Y-%m-%d %H:%M:%S')"
-    echo "[$d] $@" >>/var/log/znetcontrol.log
-}
-
-info() {
-    log "INFO: $@"
+    echo "[$d] INFO: $@" >>/var/log/znetcontrol.log
 }
 
 while :; do
     process_devices
-    sleep 60
+    sleep 30
 done

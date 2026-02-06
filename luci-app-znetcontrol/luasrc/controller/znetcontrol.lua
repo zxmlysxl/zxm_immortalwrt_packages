@@ -194,18 +194,14 @@ function action_get_status(return_data)
     local http = require("luci.http")
     local nixio = require("nixio")
     
-    -- ========== 修复：先获取基本状态 ==========
+    -- 服务状态检测
     local is_running = false
     local main_pid = ""
-    local monitor_pid = ""
     
-    -- 更可靠的进程检测方法
     local pgrep_result = sys.exec("pgrep -f 'znetcontrolctrl' 2>/dev/null")
     if pgrep_result and pgrep_result ~= "" then
-        -- 提取第一个PID
         main_pid = pgrep_result:match("%d+")
         if main_pid then
-            -- 检查进程是否真的存在
             local proc_dir = "/proc/" .. main_pid
             if nixio.fs.access(proc_dir) then
                 is_running = true
@@ -213,82 +209,29 @@ function action_get_status(return_data)
         end
     end
     
-    -- 备用检测方法
-    if not is_running then
-        local ps_result = sys.exec("ps w | grep 'znetcontrolctrl' | grep -v grep | head -1")
-        if ps_result and ps_result ~= "" then
-            local parts = {}
-            for part in ps_result:gmatch("%S+") do
-                table.insert(parts, part)
-            end
-            if #parts >= 1 then
-                main_pid = parts[1]
-                is_running = true
-            end
-        end
-    end
-    
-    -- 获取运行时间
+    -- 运行时间
     local uptime = ""
     if is_running and main_pid ~= "" then
         uptime = get_process_uptime(main_pid)
     end
 
-    local status = {
-        running = is_running,
-        total_rules = 0,
-        enabled_rules = 0,
-        active_rules = 0,
-        pid = main_pid or "",
-        monitor_pid = monitor_pid or "",
-        uptime = uptime or "",
-        version = get_app_version()
-    }
-
-    -- ========== 规则统计逻辑 ==========
+    -- 规则统计
     local total_count = 0
     local enabled_count = 0
+    local active_count = 0
     
-    -- 使用安全的遍历方式
-    local success, err = pcall(function()
-        uci:foreach("znetcontrol", "device", function(s)
-            if s[".type"] == "device" then
-                total_count = total_count + 1
-                local enabled = (s.enable == "1" or s.enable == "on" or s.enable == "true")
-                if enabled then
-                    enabled_count = enabled_count + 1
-                end
+    -- 统计配置规则
+    uci:foreach("znetcontrol", "device", function(s)
+        if s[".type"] == "device" then
+            total_count = total_count + 1
+            local enabled = (s.enable == "1" or s.enable == "on" or s.enable == "true")
+            if enabled then
+                enabled_count = enabled_count + 1
             end
-        end)
-        
-        -- 如果没有device段，检查旧的rule段（兼容性）
-        if total_count == 0 then
-            uci:foreach("znetcontrol", "rule", function(s)
-                if s[".type"] == "rule" then
-                    total_count = total_count + 1
-                    local enabled = (s.enabled == "1" or s.enabled == "on" or s.enabled == "true")
-                    if enabled then
-                        enabled_count = enabled_count + 1
-                    end
-                end
-            end)
         end
     end)
     
-    if not success then
-        -- 如果遍历出错，使用备用方法
-        local config_content = sys.exec("uci show znetcontrol 2>/dev/null | grep -c '=device'")
-        total_count = tonumber(config_content) or 0
-        enabled_count = 0  -- 简化处理
-    end
-    
-    status.total_rules = total_count
-    status.enabled_rules = enabled_count
-
-    -- ========== 修复：统计当前实际生效的规则数 ==========
-    local active_count = 0
-    
-    -- 方法1：检查IDLIST文件
+    -- 统计生效规则（从IDLIST）
     local idlist_file = "/var/run/znetcontrol.idlist"
     if nixio.fs.access(idlist_file) then
         local fd = io.open(idlist_file, "r")
@@ -303,28 +246,45 @@ function action_get_status(return_data)
         end
     end
     
-    -- 方法2：如果IDLIST没有，检查nftables
-    if active_count == 0 and is_running then
-        local nft_check = sys.exec("nft list table inet znetcontrol 2>/dev/null | grep -c 'drop comment'")
-        if nft_check then
-            active_count = tonumber(nft_check) or 0
+    -- nftables规则计数
+    local nft_count = 0
+    if is_running then
+        -- 检测网关模式
+        local default_gw = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $3}'")
+        local lan_iface = sys.exec("uci get network.lan.ifname 2>/dev/null || echo br-lan")
+        local my_lan_ip = sys.exec("ip -4 addr show dev " .. lan_iface .. " 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -1")
+        
+        if default_gw and default_gw ~= "" and default_gw ~= my_lan_ip and default_gw ~= "0.0.0.0" then
+            -- 旁路由模式，检查inet表
+            nft_count = tonumber(sys.exec("nft list table inet znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
+        else
+            -- 主路由模式，检查bridge和ip表
+            local bridge_count = tonumber(sys.exec("nft list table bridge znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
+            local ip_count = tonumber(sys.exec("nft list table ip znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
+            nft_count = bridge_count + ip_count
         end
     end
     
-    status.active_rules = active_count
+    local status = {
+        running = is_running,
+        total_rules = total_count,
+        enabled_rules = enabled_count,
+        active_rules = active_count,
+        nft_rules = nft_count,
+        pid = main_pid or "",
+        uptime = uptime or "",
+        version = get_app_version()
+    }
 
-    -- ========== 正确处理返回 ==========
     if return_data then
         return status
     end
     
-    -- ========== 返回JSON响应 ==========
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
     
-    -- 使用更安全的JSON构建
     local json = require("luci.jsonc")
     http.write_json(status)
 end
@@ -421,6 +381,7 @@ function action_firewall_status()
         blocked_count = 0,
         mac_count = 0,
         ip_count = 0,
+        mac_marked_count = 0,  -- 新增：标记的MAC数量
         devices = {},
         tables_found = {}
     }
@@ -430,7 +391,8 @@ function action_firewall_status()
         {name = "inet znetcontrol", type = "inet"},
         {name = "ip znetcontrol", type = "ip"},
         {name = "ip6 znetcontrol", type = "ip6"},
-        {name = "bridge znetcontrol", type = "bridge"}
+        {name = "bridge znetcontrol", type = "bridge"},
+        {name = "inet znetcontrol_mark", type = "mark"}  -- 新增：标记表
     }
     
     for _, table_info in ipairs(tables_to_check) do
@@ -443,45 +405,6 @@ function action_firewall_status()
             
             -- 分析这个表的规则
             analyze_nft_table(output, table_info.type, status)
-        end
-    end
-    
-    -- 如果没有找到任何nft表，检查iptables
-    if not status.table_exists then
-        local ipt_output = sys.exec("iptables -L znetcontrol -n 2>/dev/null")
-        if ipt_output and ipt_output ~= "" then
-            status.table_exists = true
-            status.tables_found["iptables"] = true
-            
-            -- 统计iptables规则
-            local rule_count = 0
-            for _ in ipt_output:gmatch("DROP") do
-                rule_count = rule_count + 1
-            end
-            status.blocked_count = rule_count
-        end
-    end
-    
-    -- 如果没有找到任何防火墙表，检查IDLIST
-    if not status.table_exists then
-        local idlist_file = "/var/run/znetcontrol.idlist"
-        local nixio = require("nixio")
-        if nixio.fs.access(idlist_file) then
-            local fd = io.open(idlist_file, "r")
-            if fd then
-                local content = fd:read("*all")
-                fd:close()
-                if content then
-                    local rule_count = 0
-                    for _ in content:gmatch("![0-9]+!") do
-                        rule_count = rule_count + 1
-                    end
-                    if rule_count > 0 then
-                        status.blocked_count = rule_count
-                        status.tables_found["idlist"] = true
-                    end
-                end
-            end
         end
     end
     
@@ -501,14 +424,11 @@ function analyze_nft_table(output, table_type, status)
     -- 根据表类型分类统计
     if table_type == "bridge" then
         -- bridge表处理MAC地址
-        -- 先检查set中是否有元素
         local has_mac_elements = false
         for line in output:gmatch("[^\r\n]+") do
             if line:match("elements =") and line:match("{") then
-                -- 检查是否有非空的MAC地址元素
                 if not line:match("elements = { }") then
                     has_mac_elements = true
-                    -- 统计实际元素数量
                     local element_count = 0
                     for _ in line:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
                         element_count = element_count + 1
@@ -525,14 +445,11 @@ function analyze_nft_table(output, table_type, status)
         
     elseif table_type == "ip" then
         -- ip表处理IPv4地址
-        -- 检查set中是否有元素
         local has_ip_elements = false
         for line in output:gmatch("[^\r\n]+") do
             if line:match("elements =") and line:match("{") then
-                -- 检查是否有非空的IP地址元素
                 if not line:match("elements = { }") then
                     has_ip_elements = true
-                    -- 统计实际元素数量
                     local element_count = 0
                     for _ in line:gmatch("(%d+%.%d+%.%d+%.%d+)") do
                         element_count = element_count + 1
@@ -545,6 +462,21 @@ function analyze_nft_table(output, table_type, status)
         
         if not has_ip_elements then
             status.ip_count = 0
+        end
+        
+    elseif table_type == "mark" then
+        -- 标记表统计
+        for line in output:gmatch("[^\r\n]+") do
+            if line:match("elements =") and line:match("{") then
+                if not line:match("elements = { }") then
+                    local element_count = 0
+                    for _ in line:gmatch("([0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f]:[0-9a-f][0-9a-f])") do
+                        element_count = element_count + 1
+                    end
+                    status.mac_marked_count = element_count
+                    break
+                end
+            end
         end
     end
 end
@@ -991,3 +923,4 @@ function action_save_config()
         message = "配置已保存"
     })
 end
+
