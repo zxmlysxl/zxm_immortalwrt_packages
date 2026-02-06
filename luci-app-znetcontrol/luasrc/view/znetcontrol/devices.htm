@@ -342,29 +342,64 @@ function closeWindow() {
     }
 }
 
-// 添加CSS样式
+// 添加CSS样式 - 只修改文字颜色和背景色
 const style = document.createElement('style');
 style.textContent = `
-    /* 表格样式 */
+    /* 表格样式 - 修改背景色为透明，使用主题背景 */
     #device-table {
         width: 100%;
         border-collapse: collapse;
         margin-bottom: 20px;
-        background: white;
+        background: transparent; /* 改为透明背景 */
         border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* 表格标题行样式 */
-    .table.cbi-section-table {
-        border-radius: 8px !important;
-        overflow: hidden !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
-        background: white !important;
-        border: 1px solid #e0e0e0 !important;
+    /* 表格内容区域使用主题背景色 */
+    #device-list {
+        background: transparent; /* 使用主题背景色 */
     }
     
+    #device-list .tr:not(.placeholder) {
+        background: transparent; /* 使用主题背景色 */
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* 浅色分割线 */
+        min-height: 55px;
+    }
+    
+    #device-list .tr:not(.placeholder):hover {
+        background-color: rgba(255, 255, 255, 0.05); /* 悬停时轻微变亮 */
+    }
+    
+    #device-list .tr:last-child {
+        border-bottom: none;
+    }
+    
+    /* 修改文字颜色为浅色系 */
+    .device-row .device-ip code,
+    .device-row .device-mac code {
+        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        font-size: 14px; /* 增大字号 */
+        background: rgba(255, 255, 255, 0.1); /* 浅色背景 */
+        padding: 4px 8px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #ffffff !important; /* 白色文字 */
+        font-weight: 500; /* 稍微加粗 */
+    }
+    
+    .device-row .device-hostname {
+        font-weight: 500;
+        color: #f0f0f0 !important; /* 浅灰色文字 */
+        font-size: 14px; /* 增大字号 */
+    }
+    
+    .device-row .device-hostname span {
+        color: #cccccc !important; /* 未知设备用稍深一点的灰色 */
+        font-size: 14px;
+    }
+    
+    /* 表格标题行样式保持不变 */
     .tr.table-titles {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
         color: #ffffff !important;
@@ -401,25 +436,12 @@ style.textContent = `
         background: rgba(255, 255, 255, 0.3) !important;
     }
     
-    /* 表格内容区域样式 */
-    #device-list .tr:not(.placeholder) {
-        border-bottom: 1px solid #f0f0f0;
-        min-height: 55px;
-    }
-    
-    #device-list .tr:not(.placeholder):hover {
-        background-color: #f8f9fa;
-    }
-    
-    #device-list .tr:last-child {
-        border-bottom: none;
-    }
-       
+    /* 其他样式保持不变 */
     .tr {
         display: flex;
         width: 100%;
         min-height: 60px;
-        border-bottom: 1px solid #f0f0f0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     }
     
     .tr:last-child {
@@ -427,7 +449,7 @@ style.textContent = `
     }
     
     .tr:hover {
-        background-color: #f8f9fa;
+        background-color: rgba(255, 255, 255, 0.05);
     }
     
     .th, .td {
@@ -440,23 +462,6 @@ style.textContent = `
     .th {
         font-size: 14px;
         letter-spacing: 0.5px;
-    }
-    
-    /* 设备信息样式 */
-    .device-ip code,
-    .device-mac code {
-        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-        font-size: 12px;
-        background: #f8f9fa;
-        padding: 4px 8px;
-        border-radius: 4px;
-        border: 1px solid #e9ecef;
-        color: #495057;
-    }
-    
-    .device-hostname {
-        font-weight: 500;
-        color: #212529;
     }
     
     /* 状态容器样式 */
@@ -478,7 +483,7 @@ style.textContent = `
     }
     
     .configured .status-icon {
-        background: #d4edda;
+        background: rgba(212, 237, 218, 0.2); /* 半透明背景 */
         color: #28a745;
     }
     
@@ -494,7 +499,7 @@ style.textContent = `
     
     .status-action {
         font-size: 12px;
-        color: #6c757d;
+        color: #cccccc; /* 浅灰色 */
         cursor: pointer;
         transition: color 0.2s;
         margin-top: 2px;
@@ -535,7 +540,7 @@ style.textContent = `
     .loading-spinner {
         width: 40px;
         height: 40px;
-        border: 3px solid #f3f3f3;
+        border: 3px solid rgba(255, 255, 255, 0.1);
         border-top: 3px solid #667eea;
         border-radius: 50%;
         animation: spin 1s linear infinite;
@@ -551,6 +556,16 @@ style.textContent = `
     .empty-state,
     .error-state {
         padding: 20px;
+    }
+    
+    .empty-state i,
+    .error-state i {
+        color: rgba(255, 255, 255, 0.3);
+    }
+    
+    .empty-state p,
+    .error-state p {
+        color: rgba(255, 255, 255, 0.6);
     }
     
     /* 确认对话框 */
@@ -660,7 +675,7 @@ style.textContent = `
         .tr {
             flex-direction: column;
             padding: 15px;
-            border-bottom: 2px solid #f0f0f0;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
         }
         
         .th {
@@ -676,7 +691,7 @@ style.textContent = `
         .td:before {
             content: attr(data-label);
             font-weight: 600;
-            color: #666;
+            color: rgba(255, 255, 255, 0.7);
             width: 100px;
             display: inline-block;
             margin-right: 10px;

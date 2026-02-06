@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=2.0.6
+PKG_VERSION:=2.0.7
 PKG_RELEASE:=20260206
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
@@ -10,22 +10,43 @@ LUCI_DESCRIPTION:=基于IP/MAC地址的网络访问时间管控系统
 LUCI_DEPENDS:=+luci-base +luci-compat +nftables +conntrack +bash +bc
 LUCI_PKGARCH:=all
 
-include $(TOPDIR)/feeds/luci/luci.mk
+include $(INCLUDE_DIR)/package.mk
+
+# ========== 清除可能存在的重复定义 ==========
+undefine Package/$(PKG_NAME)
+undefine Package/$(PKG_NAME)/install
+undefine Package/$(PKG_NAME)/conffiles
+undefine Package/$(PKG_NAME)/postinst
+
+define Package/$(PKG_NAME)
+  SECTION:=luci
+  CATEGORY:=LuCI
+  SUBMENU:=3. Applications
+  TITLE:=$(LUCI_TITLE)
+  DESCRIPTION:=$(LUCI_DESCRIPTION)
+  DEPENDS:=$(LUCI_DEPENDS)
+  PKGARCH:=all
+  MAINTAINER:=$(PKG_MAINTAINER)
+endef
+
+define Package/$(PKG_NAME)/description
+$(LUCI_DESCRIPTION)
+endef
 
 define Build/Compile
 endef
 
-define Package/luci-app-znetcontrol/conffiles
+define Package/$(PKG_NAME)/conffiles
 /etc/config/znetcontrol
 endef
 
-define Package/luci-app-znetcontrol/postinst
+define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 rm -f /tmp/luci-*
 exit 0
 endef
 
-define Package/luci-app-znetcontrol/install
+define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./luasrc/controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
 	
@@ -58,4 +79,4 @@ define Package/luci-app-znetcontrol/install
 	$(INSTALL_BIN) ./root/etc/uci-defaults/luci-znetcontrol $(1)/etc/uci-defaults/luci-znetcontrol
 endef
 
-$(eval $(call BuildPackage,luci-app-znetcontrol))
+$(eval $(call BuildPackage,$(PKG_NAME)))
