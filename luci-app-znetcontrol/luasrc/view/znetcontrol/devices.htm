@@ -53,9 +53,77 @@ function escapeForJs(str) {
         .replace(/>/g, '&gt;');
 }
 
+// 检测主题模式
+function detectThemeMode() {
+    const body = document.body;
+    if (body.classList.contains('dark') || 
+        body.classList.contains('night') || 
+        body.getAttribute('data-theme') === 'dark' ||
+        window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+    }
+    return 'light';
+}
+
+// 应用主题样式
+function applyThemeStyles(mode) {
+    const isDarkMode = mode === 'dark';
+    
+    // 移除现有的主题样式
+    const existingThemeStyle = document.getElementById('theme-dynamic-style');
+    if (existingThemeStyle) {
+        existingThemeStyle.remove();
+    }
+    
+    // 创建新的主题样式
+    const themeStyle = document.createElement('style');
+    themeStyle.id = 'theme-dynamic-style';
+    
+    if (isDarkMode) {
+        // 深色主题样式
+        themeStyle.textContent = `
+            /* 深色主题样式 */
+            :root {
+                --text-primary: #f0f0f0;
+                --text-secondary: #cccccc;
+                --text-muted: #999999;
+                --bg-primary: rgba(255, 255, 255, 0.05);
+                --bg-secondary: rgba(255, 255, 255, 0.1);
+                --border-color: rgba(255, 255, 255, 0.15);
+                --code-bg: rgba(255, 255, 255, 0.1);
+                --code-border: rgba(255, 255, 255, 0.2);
+                --hover-bg: rgba(255, 255, 255, 0.08);
+                --table-header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+        `;
+    } else {
+        // 浅色主题样式
+        themeStyle.textContent = `
+            /* 浅色主题样式 */
+            :root {
+                --text-primary: #333333;
+                --text-secondary: #666666;
+                --text-muted: #999999;
+                --bg-primary: rgba(0, 0, 0, 0.02);
+                --bg-secondary: rgba(0, 0, 0, 0.05);
+                --border-color: rgba(0, 0, 0, 0.1);
+                --code-bg: rgba(0, 0, 0, 0.05);
+                --code-border: rgba(0, 0, 0, 0.1);
+                --hover-bg: rgba(0, 0, 0, 0.03);
+                --table-header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+        `;
+    }
+    
+    document.head.appendChild(themeStyle);
+}
+
 function refreshDevices() {
     const deviceList = document.getElementById('device-list');
-    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="color: #666; margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
+    const themeMode = detectThemeMode();
+    applyThemeStyles(themeMode);
+    
+    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="color: var(--text-secondary); margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
     
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_devices")%>')
         .then(response => {
@@ -71,9 +139,9 @@ function refreshDevices() {
                 html = '<div class="tr">' +
                        '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
                        '<div class="empty-state">' +
-                       '<i class="icon icon-devices" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>' +
-                       '<p style="color: #999; margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
-                       '<p style="font-size: 12px; color: #666;">请确认有设备连接到网络</p>' +
+                       '<i class="icon icon-devices" style="font-size: 48px; color: var(--text-muted); margin-bottom: 10px;"></i>' +
+                       '<p style="color: var(--text-muted); margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
+                       '<p style="font-size: 12px; color: var(--text-secondary);">请确认有设备连接到网络</p>' +
                        '</div>' +
                        '</div>' +
                        '</div>';
@@ -107,7 +175,7 @@ function refreshDevices() {
                     // 主机名列
                     html += '<div class="td" style="width: 25%;">' +
                            '<div class="device-hostname">' +
-                           (hostname || '<span style="color: #999;">未知设备</span>') +
+                           (hostname || '<span style="color: var(--text-muted);">未知设备</span>') +
                            '</div>' +
                            '</div>';
                     
@@ -121,7 +189,7 @@ function refreshDevices() {
                                '<i class="icon icon-check-circle"></i>' +
                                '</div>' +
                                '<div class="status-content">' +
-                               '<div class="status-title">已添加管控</div>' +
+                               '<div class="status-title" style="color: #28a745;">已添加管控</div>' +
                                '<div class="status-action" onclick="goToRules()">点击管理规则</div>' +
                                '</div>' +
                                '</div>';
@@ -147,7 +215,7 @@ function refreshDevices() {
                 '<div class="error-state">' +
                 '<i class="icon icon-alert-circle" style="font-size: 48px; color: #f44336; margin-bottom: 10px;"></i>' +
                 '<p style="color: #f44336; margin: 0 0 10px 0;"><%:加载失败%></p>' +
-                '<p style="font-size: 12px; color: #666; margin-bottom: 15px;">错误: ' + error.message + '</p>' +
+                '<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;">错误: ' + error.message + '</p>' +
                 '<button class="cbi-button cbi-button-action" onclick="refreshDevices()" style="padding: 8px 16px;">' +
                 '<i class="icon icon-refresh"></i> 重试' +
                 '</button>' +
@@ -342,66 +410,66 @@ function closeWindow() {
     }
 }
 
-// 添加CSS样式 - 只修改文字颜色和背景色
+// 添加CSS样式 - 使用CSS变量实现主题适配
 const style = document.createElement('style');
 style.textContent = `
-    /* 表格样式 - 修改背景色为透明，使用主题背景 */
+    /* 表格样式 - 使用CSS变量 */
     #device-table {
         width: 100%;
         border-collapse: collapse;
         margin-bottom: 20px;
-        background: transparent; /* 改为透明背景 */
+        background: var(--bg-primary);
         border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* 表格内容区域使用主题背景色 */
+    /* 表格内容区域 */
     #device-list {
-        background: transparent; /* 使用主题背景色 */
+        background: transparent;
     }
     
     #device-list .tr:not(.placeholder) {
-        background: transparent; /* 使用主题背景色 */
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* 浅色分割线 */
+        background: transparent;
+        border-bottom: 1px solid var(--border-color);
         min-height: 55px;
     }
     
     #device-list .tr:not(.placeholder):hover {
-        background-color: rgba(255, 255, 255, 0.05); /* 悬停时轻微变亮 */
+        background-color: var(--hover-bg);
     }
     
     #device-list .tr:last-child {
         border-bottom: none;
     }
     
-    /* 修改文字颜色为浅色系 */
+    /* 设备信息样式 */
     .device-row .device-ip code,
     .device-row .device-mac code {
         font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-        font-size: 14px; /* 增大字号 */
-        background: rgba(255, 255, 255, 0.1); /* 浅色背景 */
+        font-size: 14px;
+        background: var(--code-bg);
         padding: 4px 8px;
         border-radius: 4px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        color: #ffffff !important; /* 白色文字 */
-        font-weight: 500; /* 稍微加粗 */
+        border: 1px solid var(--code-border);
+        color: var(--text-primary);
+        font-weight: 500;
     }
     
     .device-row .device-hostname {
         font-weight: 500;
-        color: #f0f0f0 !important; /* 浅灰色文字 */
-        font-size: 14px; /* 增大字号 */
-    }
-    
-    .device-row .device-hostname span {
-        color: #cccccc !important; /* 未知设备用稍深一点的灰色 */
+        color: var(--text-primary);
         font-size: 14px;
     }
     
-    /* 表格标题行样式保持不变 */
+    .device-row .device-hostname span {
+        color: var(--text-muted);
+        font-size: 14px;
+    }
+    
+    /* 表格标题行样式 */
     .tr.table-titles {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        background: var(--table-header-bg) !important;
         color: #ffffff !important;
         font-weight: 600 !important;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
@@ -436,12 +504,12 @@ style.textContent = `
         background: rgba(255, 255, 255, 0.3) !important;
     }
     
-    /* 其他样式保持不变 */
+    /* 基础表格结构 */
     .tr {
         display: flex;
         width: 100%;
         min-height: 60px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: 1px solid var(--border-color);
     }
     
     .tr:last-child {
@@ -449,7 +517,7 @@ style.textContent = `
     }
     
     .tr:hover {
-        background-color: rgba(255, 255, 255, 0.05);
+        background-color: var(--hover-bg);
     }
     
     .th, .td {
@@ -483,7 +551,7 @@ style.textContent = `
     }
     
     .configured .status-icon {
-        background: rgba(212, 237, 218, 0.2); /* 半透明背景 */
+        background: rgba(40, 167, 69, 0.1);
         color: #28a745;
     }
     
@@ -499,7 +567,7 @@ style.textContent = `
     
     .status-action {
         font-size: 12px;
-        color: #cccccc; /* 浅灰色 */
+        color: var(--text-secondary);
         cursor: pointer;
         transition: color 0.2s;
         margin-top: 2px;
@@ -540,7 +608,7 @@ style.textContent = `
     .loading-spinner {
         width: 40px;
         height: 40px;
-        border: 3px solid rgba(255, 255, 255, 0.1);
+        border: 3px solid rgba(0, 0, 0, 0.1);
         border-top: 3px solid #667eea;
         border-radius: 50%;
         animation: spin 1s linear infinite;
@@ -560,12 +628,12 @@ style.textContent = `
     
     .empty-state i,
     .error-state i {
-        color: rgba(255, 255, 255, 0.3);
+        color: var(--text-muted);
     }
     
     .empty-state p,
     .error-state p {
-        color: rgba(255, 255, 255, 0.6);
+        color: var(--text-secondary);
     }
     
     /* 确认对话框 */
@@ -675,7 +743,7 @@ style.textContent = `
         .tr {
             flex-direction: column;
             padding: 15px;
-            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 2px solid var(--border-color);
         }
         
         .th {
@@ -691,7 +759,7 @@ style.textContent = `
         .td:before {
             content: attr(data-label);
             font-weight: 600;
-            color: rgba(255, 255, 255, 0.7);
+            color: var(--text-secondary);
             width: 100px;
             display: inline-block;
             margin-right: 10px;
@@ -715,6 +783,7 @@ style.textContent = `
         border-radius: 6px;
         font-weight: 500;
         transition: all 0.3s ease;
+        color: white;
     }
     
     .cbi-button-action {
@@ -725,7 +794,11 @@ style.textContent = `
     .cbi-button-apply {
         background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
         border: none;
-        color: white;
+    }
+    
+    .cbi-button {
+        background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        border: none;
     }
     
     .cbi-button:hover {
@@ -737,10 +810,37 @@ document.head.appendChild(style);
 
 // 页面加载时初始化
 window.onload = function() {
+    // 先应用主题样式
+    const themeMode = detectThemeMode();
+    applyThemeStyles(themeMode);
+    
+    // 然后刷新设备列表
     refreshDevices();
     
+    // 监听主题变化（如果主题支持动态切换）
+    const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.attributeName === 'class' || mutation.attributeName === 'data-theme') {
+                const newThemeMode = detectThemeMode();
+                applyThemeStyles(newThemeMode);
+            }
+        });
+    });
+    
+    // 观察body元素的变化
+    observer.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'data-theme']
+    });
+    
+    // 监听系统主题变化
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+        const newThemeMode = e.matches ? 'dark' : 'light';
+        applyThemeStyles(newThemeMode);
+    });
+    
     // 添加调试日志
-    console.log('设备页面已加载');
+    console.log('设备页面已加载，当前主题:', themeMode);
     
     // 添加全局错误捕获
     window.addEventListener('error', function(e) {
