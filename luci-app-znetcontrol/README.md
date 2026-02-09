@@ -16,7 +16,7 @@ opkg install luci-app-znetcontrol
 
 ## 升级日志
 
-V2.0.8
+V2.0.9
 再次调整优化在线设备页面配色，使之完美跟随主题配色；
 
 V2.0.7

@@ -39,7 +39,7 @@
 </div>
 
 <script>
-// 转义函数，防止JavaScript注入和语法错误
+// 转义函数
 function escapeForJs(str) {
     if (!str) return '';
     return String(str)
@@ -53,64 +53,150 @@ function escapeForJs(str) {
         .replace(/>/g, '&gt;');
 }
 
-// 检测主题模式
+// 主题检测
 function detectThemeMode() {
     const body = document.body;
-    if (body.classList.contains('dark') || 
-        body.classList.contains('night') || 
-        body.getAttribute('data-theme') === 'dark' ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        return 'dark';
-    }
-    return 'light';
+    if (body.classList.contains('dark') || body.classList.contains('night')) return 'dark';
+    if (body.classList.contains('light')) return 'light';
+    
+    const dataTheme = body.getAttribute('data-theme');
+    if (dataTheme === 'dark') return 'dark';
+    if (dataTheme === 'light') return 'light';
+    
+    const computedStyle = window.getComputedStyle(body);
+    const bgColor = computedStyle.backgroundColor;
+    
+    const getLuminance = (rgb) => {
+        const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!match) return 0.5;
+        
+        const r = parseInt(match[1]) / 255;
+        const g = parseInt(match[2]) / 255;
+        const b = parseInt(match[3]) / 255;
+        
+        const rLinear = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
+        const gLinear = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
+        const bLinear = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
+        
+        return 0.2126 * rLinear + 0.7152 * gLinear + 0.0722 * bLinear;
+    };
+    
+    const bgLuminance = getLuminance(bgColor);
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    
+    if (bgLuminance < 0.3) return 'dark';
+    if (bgLuminance > 0.7) return 'light';
+    return prefersDark ? 'dark' : 'light';
 }
 
-// 应用主题样式
+// 主题样式应用
 function applyThemeStyles(mode) {
-    const isDarkMode = mode === 'dark';
-    
-    // 移除现有的主题样式
     const existingThemeStyle = document.getElementById('theme-dynamic-style');
-    if (existingThemeStyle) {
-        existingThemeStyle.remove();
-    }
+    if (existingThemeStyle) existingThemeStyle.remove();
     
-    // 创建新的主题样式
     const themeStyle = document.createElement('style');
     themeStyle.id = 'theme-dynamic-style';
     
-    if (isDarkMode) {
-        // 深色主题样式
+    if (mode === 'dark') {
         themeStyle.textContent = `
             /* 深色主题样式 */
-            :root {
-                --text-primary: #f0f0f0;
-                --text-secondary: #cccccc;
-                --text-muted: #999999;
-                --bg-primary: rgba(255, 255, 255, 0.05);
-                --bg-secondary: rgba(255, 255, 255, 0.1);
-                --border-color: rgba(255, 255, 255, 0.15);
-                --code-bg: rgba(255, 255, 255, 0.1);
-                --code-border: rgba(255, 255, 255, 0.2);
-                --hover-bg: rgba(255, 255, 255, 0.08);
-                --table-header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            #device-table,
+            #device-list,
+            #device-list .tr:not(.placeholder) {
+                background-color: rgba(40, 44, 52, 0.9) !important;
+            }
+            
+            .ip-address-box,
+            .mac-address-box {
+                color: #e4e4e4 !important;
+                background-color: rgba(255, 255, 255, 0.12) !important;
+                border-color: rgba(255, 255, 255, 0.2) !important;
+            }
+            
+            .device-hostname {
+                color: #d7dae0 !important;
+            }
+            
+            .device-hostname span {
+                color: #a0a0a0 !important;
+            }
+            
+            #device-list .tr:not(.placeholder) {
+                border-bottom-color: rgba(255, 255, 255, 0.15) !important;
+            }
+            
+            #device-list .tr:not(.placeholder):hover {
+                background-color: rgba(255, 255, 255, 0.08) !important;
+            }
+            
+            .status-action {
+                color: #aaaaaa !important;
+            }
+            
+            .status-action:hover {
+                color: #4dabf7 !important;
+            }
+            
+            .placeholder p,
+            .empty-state p,
+            .error-state p:not([style*="color: #f44336"]) {
+                color: rgba(255, 255, 255, 0.75) !important;
+            }
+            
+            .loading-spinner {
+                border-color: rgba(255, 255, 255, 0.1);
+                border-top-color: #667eea;
             }
         `;
     } else {
-        // 浅色主题样式
         themeStyle.textContent = `
             /* 浅色主题样式 */
-            :root {
-                --text-primary: #333333;
-                --text-secondary: #666666;
-                --text-muted: #999999;
-                --bg-primary: rgba(0, 0, 0, 0.02);
-                --bg-secondary: rgba(0, 0, 0, 0.05);
-                --border-color: rgba(0, 0, 0, 0.1);
-                --code-bg: rgba(0, 0, 0, 0.05);
-                --code-border: rgba(0, 0, 0, 0.1);
-                --hover-bg: rgba(0, 0, 0, 0.03);
-                --table-header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            #device-table,
+            #device-list,
+            #device-list .tr:not(.placeholder) {
+                background-color: #ffffff !important;
+            }
+            
+            .ip-address-box,
+            .mac-address-box {
+                color: #2d3748 !important;
+                background-color: rgba(0, 0, 0, 0.04) !important;
+                border-color: rgba(0, 0, 0, 0.1) !important;
+            }
+            
+            .device-hostname {
+                color: #2d3748 !important;
+            }
+            
+            .device-hostname span {
+                color: #718096 !important;
+            }
+            
+            #device-list .tr:not(.placeholder) {
+                border-bottom-color: rgba(0, 0, 0, 0.08) !important;
+            }
+            
+            #device-list .tr:not(.placeholder):hover {
+                background-color: rgba(0, 0, 0, 0.02) !important;
+            }
+            
+            .status-action {
+                color: #718096 !important;
+            }
+            
+            .status-action:hover {
+                color: #3182ce !important;
+            }
+            
+            .placeholder p,
+            .empty-state p,
+            .error-state p:not([style*="color: #f44336"]) {
+                color: #718096 !important;
+            }
+            
+            .loading-spinner {
+                border-color: rgba(0, 0, 0, 0.1);
+                border-top-color: #667eea;
             }
         `;
     }
@@ -120,28 +206,21 @@ function applyThemeStyles(mode) {
 
 function refreshDevices() {
     const deviceList = document.getElementById('device-list');
-    const themeMode = detectThemeMode();
-    applyThemeStyles(themeMode);
     
-    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="color: var(--text-secondary); margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
+    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
     
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_devices")%>')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            return response.json();
-        })
+        .then(response => response.json())
         .then(devices => {
             let html = '';
             
-            if (!devices || !Array.isArray(devices) || devices.length === 0) {
+            if (!devices || devices.length === 0) {
                 html = '<div class="tr">' +
                        '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
                        '<div class="empty-state">' +
-                       '<i class="icon icon-devices" style="font-size: 48px; color: var(--text-muted); margin-bottom: 10px;"></i>' +
-                       '<p style="color: var(--text-muted); margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
-                       '<p style="font-size: 12px; color: var(--text-secondary);">请确认有设备连接到网络</p>' +
+                       '<i class="icon icon-devices" style="font-size: 48px; margin-bottom: 10px;"></i>' +
+                       '<p style="margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
+                       '<p style="font-size: 12px;">请确认有设备连接到网络</p>' +
                        '</div>' +
                        '</div>' +
                        '</div>';
@@ -152,35 +231,34 @@ function refreshDevices() {
                     const targetValue = device.mac || device.ip;
                     const hostname = device.hostname || '';
                     
-                    // 转义特殊字符
                     const safeTarget = escapeForJs(targetValue);
                     const safeHostname = escapeForJs(hostname);
                     
                     html += '<div class="tr device-row">';
                     
-                    // IP地址列
-                    html += '<div class="td" style="width: 20%;">' +
-                           '<div class="device-ip">' +
-                           '<code>' + (device.ip || '未知') + '</code>' +
+                    // IP地址列 - 使用固定宽度框
+                    html += '<div class="td ip-address-cell">' +
+                           '<div class="ip-address-box">' +
+                           '<span class="ip-address-text">' + (device.ip || '未知') + '</span>' +
                            '</div>' +
                            '</div>';
                     
                     // MAC地址列
-                    html += '<div class="td" style="width: 25%;">' +
-                           '<div class="device-mac">' +
-                           '<code>' + (device.mac || '') + '</code>' +
+                    html += '<div class="td mac-address-cell">' +
+                           '<div class="mac-address-box">' +
+                           '<span class="mac-address-text">' + (device.mac || '') + '</span>' +
                            '</div>' +
                            '</div>';
                     
                     // 主机名列
-                    html += '<div class="td" style="width: 25%;">' +
+                    html += '<div class="td hostname-cell">' +
                            '<div class="device-hostname">' +
-                           (hostname || '<span style="color: var(--text-muted);">未知设备</span>') +
+                           (hostname || '<span>未知设备</span>') +
                            '</div>' +
                            '</div>';
                     
                     // 管控状态列
-                    html += '<div class="td" style="width: 30%;">' +
+                    html += '<div class="td status-cell">' +
                            '<div class="device-status">';
                     
                     if (isConfigured) {
@@ -189,12 +267,11 @@ function refreshDevices() {
                                '<i class="icon icon-check-circle"></i>' +
                                '</div>' +
                                '<div class="status-content">' +
-                               '<div class="status-title" style="color: #28a745;">已添加管控</div>' +
+                               '<div class="status-title">已添加管控</div>' +
                                '<div class="status-action" onclick="goToRules()">点击管理规则</div>' +
                                '</div>' +
                                '</div>';
                     } else {
-                        // 使用安全的 onclick 绑定
                         html += '<div class="status-container not-configured">' +
                                '<button class="add-rule-btn" onclick="addToRules(\'' + targetType + '\', \'' + safeTarget + '\', \'' + safeHostname + '\')">' +
                                '<i class="icon icon-plus-circle"></i> 添加管控规则' +
@@ -207,6 +284,8 @@ function refreshDevices() {
             }
             
             deviceList.innerHTML = html;
+            const themeMode = detectThemeMode();
+            applyThemeStyles(themeMode);
         })
         .catch(error => {
             console.error('获取设备列表失败:', error);
@@ -215,38 +294,34 @@ function refreshDevices() {
                 '<div class="error-state">' +
                 '<i class="icon icon-alert-circle" style="font-size: 48px; color: #f44336; margin-bottom: 10px;"></i>' +
                 '<p style="color: #f44336; margin: 0 0 10px 0;"><%:加载失败%></p>' +
-                '<p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 15px;">错误: ' + error.message + '</p>' +
+                '<p style="font-size: 12px; margin-bottom: 15px;">错误: ' + error.message + '</p>' +
                 '<button class="cbi-button cbi-button-action" onclick="refreshDevices()" style="padding: 8px 16px;">' +
                 '<i class="icon icon-refresh"></i> 重试' +
                 '</button>' +
                 '</div>' +
                 '</div>' +
                 '</div>';
+            
+            const themeMode = detectThemeMode();
+            applyThemeStyles(themeMode);
         });
 }
 
+// 其他函数保持原样
 function addToRules(type, target, hostname) {
-    console.log('添加规则:', { type, target, hostname });
-    
     if (!target || target === '未知') {
         showToast('无法添加，目标地址无效', 'error');
         return;
     }
     
-    // ========== 修复：清理输入数据 ==========
-    // 清理换行符和多余空格
     hostname = (hostname || '').trim().replace(/\n/g, '');
     target = (target || '').trim().replace(/\n/g, '');
     
-    // 判断是否使用主机名
     const invalidHostnames = ['未知', '未知设备', 'unknown', '*', ''];
-    const isHostnameValid = hostname && 
-                           !invalidHostnames.includes(hostname) && 
-                           hostname !== target;
+    const isHostnameValid = hostname && !invalidHostnames.includes(hostname) && hostname !== target;
     
     let ruleName = '';
     if (isHostnameValid) {
-        // 清理主机名中的换行符和域名后缀
         ruleName = hostname.replace(/\.lan$/i, '')
                           .replace(/\.local$/i, '')
                           .replace(/\.home$/i, '')
@@ -261,9 +336,6 @@ function addToRules(type, target, hostname) {
         }
     }
     
-    console.log('生成的规则名称:', ruleName);
-    
-    // 显示确认对话框 - 使用数据属性而不是 onclick
     const confirmDialog = document.createElement('div');
     confirmDialog.className = 'confirm-dialog-overlay';
     confirmDialog.innerHTML = `
@@ -291,16 +363,10 @@ function addToRules(type, target, hostname) {
     `;
     document.body.appendChild(confirmDialog);
     
-    // 绑定对话框事件
     setTimeout(() => {
         const dialog = document.querySelector('.confirm-dialog-overlay');
         if (dialog) {
-            // 取消按钮
-            dialog.querySelector('.cancel-btn').addEventListener('click', function() {
-                dialog.remove();
-            });
-            
-            // 确定按钮
+            dialog.querySelector('.cancel-btn').addEventListener('click', () => dialog.remove());
             dialog.querySelector('.confirm-btn').addEventListener('click', function() {
                 const type = this.getAttribute('data-type');
                 const target = this.getAttribute('data-target');
@@ -313,60 +379,28 @@ function addToRules(type, target, hostname) {
 }
 
 function confirmAddRule(type, target, ruleName) {
-    // 移除对话框
     const dialog = document.querySelector('.confirm-dialog-overlay');
     if (dialog) dialog.remove();
     
-    // 显示加载状态
     showToast('正在添加规则...', 'info');
     
-    // 清理数据
-    target = (target || '').trim();
-    ruleName = (ruleName || '').trim().replace(/\n/g, '');
-    
-    console.log('提交数据:', { target, type, name: ruleName });
-    
-    // 发送添加请求
     const formData = new FormData();
-    formData.append('target', target);
+    formData.append('target', target.trim());
     formData.append('type', type);
-    formData.append('name', ruleName);
+    formData.append('name', ruleName.trim());
     
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/quick_add")%>', {
         method: 'POST',
         body: formData
     })
-    .then(response => {
-        console.log('响应状态:', response.status, response.statusText);
+    .then(response => response.text())
+    .then(text => {
+        let result;
+        try { result = JSON.parse(text); } catch { throw new Error('响应格式错误'); }
         
-        if (response.status >= 500) {
-            throw new Error(`服务器错误 (${response.status})`);
-        }
-        
-        return response.text().then(text => {
-            console.log('响应文本:', text);
-            
-            if (!text) {
-                throw new Error('服务器返回空响应');
-            }
-            
-            try {
-                return JSON.parse(text);
-            } catch (e) {
-                console.error('JSON解析错误:', e);
-                throw new Error(`服务器响应格式错误: ${text.substring(0, 100)}`);
-            }
-        });
-    })
-    .then(result => {
-        console.log('添加结果:', result);
         if (result.success) {
             showToast('规则添加成功，正在跳转到管控规则页面...', 'success');
-            
-            // 2秒后自动跳转到规则页面
-            setTimeout(() => {
-                window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
-            }, 2000);
+            setTimeout(() => window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>', 2000);
         } else {
             showToast('添加失败: ' + (result.message || '未知错误'), 'error');
         }
@@ -384,18 +418,10 @@ function goToRules() {
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `
-        <div class="toast-content">
-            <i class="icon icon-${type === 'success' ? 'check-circle' : type === 'error' ? 'alert-circle' : 'info'}"></i>
-            <span>${message}</span>
-        </div>
-    `;
+    toast.innerHTML = `<div class="toast-content"><i class="icon icon-${type === 'success' ? 'check-circle' : type === 'error' ? 'alert-circle' : 'info'}"></i><span>${message}</span></div>`;
     document.body.appendChild(toast);
     
-    // 显示动画
     setTimeout(() => toast.classList.add('show'), 10);
-    
-    // 3秒后自动移除
     setTimeout(() => {
         toast.classList.remove('show');
         setTimeout(() => toast.remove(), 300);
@@ -410,88 +436,112 @@ function closeWindow() {
     }
 }
 
-// 添加CSS样式 - 使用CSS变量实现主题适配
+// CSS样式 - 重点修改IP地址框宽度
 const style = document.createElement('style');
 style.textContent = `
-    /* 表格样式 - 使用CSS变量 */
+    /* 表格基础样式 */
     #device-table {
         width: 100%;
         border-collapse: collapse;
         margin-bottom: 20px;
-        background: var(--bg-primary);
         border-radius: 8px;
         overflow: hidden;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
-    /* 表格内容区域 */
-    #device-list {
-        background: transparent;
+    /* 表格列宽 */
+    .ip-address-cell { width: 20%; min-width: 180px; }
+    .mac-address-cell { width: 25%; min-width: 200px; }
+    .hostname-cell { width: 25%; }
+    .status-cell { width: 30%; }
+    
+    /* IP地址框 - 固定宽度 */
+    .ip-address-box {
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 13px;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: 1px solid;
+        font-weight: 500;
+        display: inline-block;
+        width: 140px; /* 固定宽度 */
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        box-sizing: border-box;
+        letter-spacing: 0.5px;
     }
     
-    #device-list .tr:not(.placeholder) {
-        background: transparent;
-        border-bottom: 1px solid var(--border-color);
-        min-height: 55px;
+    /* IP地址文字 */
+    .ip-address-text {
+        display: inline-block;
+        width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     
-    #device-list .tr:not(.placeholder):hover {
-        background-color: var(--hover-bg);
+    /* MAC地址框 - 固定宽度 */
+    .mac-address-box {
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 13px;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: 1px solid;
+        font-weight: 500;
+        display: inline-block;
+        width: 160px; /* 固定宽度 */
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        box-sizing: border-box;
+        letter-spacing: 0.5px;
     }
     
-    #device-list .tr:last-child {
+    /* MAC地址文字 */
+    .mac-address-text {
+        display: inline-block;
+        width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    /* 主机名样式 */
+    .device-hostname {
+        font-weight: 500;
+        font-size: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding-right: 10px;
+    }
+    
+    /* 表格结构 */
+    .tr {
+        display: flex;
+        width: 100%;
+        min-height: 60px;
+        border-bottom: 1px solid;
+        align-items: center;
+    }
+    
+    .tr:last-child {
         border-bottom: none;
     }
     
-    /* 设备信息样式 */
-    .device-row .device-ip code,
-    .device-row .device-mac code {
-        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-        font-size: 14px;
-        background: var(--code-bg);
-        padding: 4px 8px;
-        border-radius: 4px;
-        border: 1px solid var(--code-border);
-        color: var(--text-primary);
-        font-weight: 500;
-    }
-    
-    .device-row .device-hostname {
-        font-weight: 500;
-        color: var(--text-primary);
-        font-size: 14px;
-    }
-    
-    .device-row .device-hostname span {
-        color: var(--text-muted);
-        font-size: 14px;
-    }
-    
-    /* 表格标题行样式 */
     .tr.table-titles {
-        background: var(--table-header-bg) !important;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
         color: #ffffff !important;
         font-weight: 600 !important;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
         border-radius: 8px 8px 0 0 !important;
-        overflow: hidden !important;
-        margin: 0 !important;
-        display: flex !important;
-        align-items: stretch !important;
         min-height: 50px !important;
     }
     
     .tr.table-titles .th {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: flex-start !important;
-        padding: 0 16px !important;
-        background: transparent !important;
-        border: none !important;
-        color: inherit !important;
-        font-weight: inherit !important;
-        text-shadow: inherit !important;
-        position: relative !important;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        position: relative;
     }
     
     .tr.table-titles .th:not(:last-child)::after {
@@ -504,32 +554,11 @@ style.textContent = `
         background: rgba(255, 255, 255, 0.3) !important;
     }
     
-    /* 基础表格结构 */
-    .tr {
-        display: flex;
-        width: 100%;
-        min-height: 60px;
-        border-bottom: 1px solid var(--border-color);
-    }
-    
-    .tr:last-child {
-        border-bottom: none;
-    }
-    
-    .tr:hover {
-        background-color: var(--hover-bg);
-    }
-    
     .th, .td {
         padding: 12px 15px;
         display: flex;
         align-items: center;
         box-sizing: border-box;
-    }
-    
-    .th {
-        font-size: 14px;
-        letter-spacing: 0.5px;
     }
     
     /* 状态容器样式 */
@@ -557,24 +586,27 @@ style.textContent = `
     
     .status-content {
         flex: 1;
+        min-width: 0;
     }
     
     .status-title {
         font-weight: 600;
         color: #28a745;
         font-size: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     
     .status-action {
         font-size: 12px;
-        color: var(--text-secondary);
         cursor: pointer;
         transition: color 0.2s;
         margin-top: 2px;
+        white-space: nowrap;
     }
     
     .status-action:hover {
-        color: #007bff;
         text-decoration: underline;
     }
     
@@ -593,15 +625,12 @@ style.textContent = `
         gap: 6px;
         transition: all 0.3s ease;
         box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+        white-space: nowrap;
     }
     
     .add-rule-btn:hover {
         transform: translateY(-1px);
         box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
-    }
-    
-    .add-rule-btn:active {
-        transform: translateY(0);
     }
     
     /* 加载动画 */
@@ -620,7 +649,7 @@ style.textContent = `
         100% { transform: rotate(360deg); }
     }
     
-    /* 空状态样式 */
+    /* 空状态和错误状态 */
     .empty-state,
     .error-state {
         padding: 20px;
@@ -628,114 +657,8 @@ style.textContent = `
     
     .empty-state i,
     .error-state i {
-        color: var(--text-muted);
-    }
-    
-    .empty-state p,
-    .error-state p {
-        color: var(--text-secondary);
-    }
-    
-    /* 确认对话框 */
-    .confirm-dialog-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0,0,0,0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-        backdrop-filter: blur(4px);
-    }
-    
-    .confirm-dialog {
-        background: white;
-        border-radius: 12px;
-        padding: 24px;
-        width: 90%;
-        max-width: 400px;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-        animation: slideIn 0.3s ease;
-    }
-    
-    @keyframes slideIn {
-        from {
-            opacity: 0;
-            transform: translateY(-20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
-    }
-    
-    .dialog-header {
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    
-    .dialog-body {
-        margin-bottom: 24px;
-    }
-    
-    .device-info-card {
-        background: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 15px;
-        margin: 15px 0;
-    }
-    
-    .device-info-card div {
-        margin: 8px 0;
-        font-size: 14px;
-    }
-    
-    .dialog-actions {
-        display: flex;
-        gap: 10px;
-        justify-content: flex-end;
-    }
-    
-    /* 消息提示 */
-    .toast {
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: white;
-        border-radius: 8px;
-        padding: 12px 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        transform: translateX(120%);
-        transition: transform 0.3s ease;
-        z-index: 1001;
-        min-width: 300px;
-        border-left: 4px solid #007bff;
-    }
-    
-    .toast.show {
-        transform: translateX(0);
-    }
-    
-    .toast-success {
-        border-left-color: #28a745;
-    }
-    
-    .toast-error {
-        border-left-color: #dc3545;
-    }
-    
-    .toast-info {
-        border-left-color: #17a2b8;
-    }
-    
-    .toast-content {
-        display: flex;
-        align-items: center;
-        gap: 10px;
+        font-size: 48px;
+        margin-bottom: 10px;
     }
     
     /* 响应式设计 */
@@ -743,7 +666,8 @@ style.textContent = `
         .tr {
             flex-direction: column;
             padding: 15px;
-            border-bottom: 2px solid var(--border-color);
+            border-bottom-width: 2px;
+            align-items: flex-start;
         }
         
         .th {
@@ -752,29 +676,31 @@ style.textContent = `
         
         .td {
             width: 100% !important;
-            padding: 8px 0;
+            padding: 10px 0;
             border: none;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .ip-address-box,
+        .mac-address-box {
+            width: 100% !important;
+            text-align: left;
+            margin: 5px 0;
         }
         
         .td:before {
             content: attr(data-label);
             font-weight: 600;
-            color: var(--text-secondary);
-            width: 100px;
-            display: inline-block;
-            margin-right: 10px;
+            margin-bottom: 5px;
             font-size: 13px;
+            color: inherit;
         }
         
-        .device-row .td:nth-child(1):before { content: "IP地址:"; }
-        .device-row .td:nth-child(2):before { content: "MAC地址:"; }
-        .device-row .td:nth-child(3):before { content: "主机名:"; }
-        .device-row .td:nth-child(4):before { content: "管控状态:"; }
-        
-        .confirm-dialog {
-            width: 95%;
-            margin: 10px;
-        }
+        .ip-address-cell:before { content: "IP地址:"; }
+        .mac-address-cell:before { content: "MAC地址:"; }
+        .hostname-cell:before { content: "主机名:"; }
+        .status-cell:before { content: "管控状态:"; }
     }
     
     /* 按钮组样式 */
@@ -808,44 +734,26 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// 页面加载时初始化
+// 页面加载
 window.onload = function() {
-    // 先应用主题样式
     const themeMode = detectThemeMode();
     applyThemeStyles(themeMode);
-    
-    // 然后刷新设备列表
     refreshDevices();
     
-    // 监听主题变化（如果主题支持动态切换）
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            if (mutation.attributeName === 'class' || mutation.attributeName === 'data-theme') {
-                const newThemeMode = detectThemeMode();
-                applyThemeStyles(newThemeMode);
-            }
-        });
-    });
-    
-    // 观察body元素的变化
-    observer.observe(document.body, {
-        attributes: true,
-        attributeFilter: ['class', 'data-theme']
-    });
-    
-    // 监听系统主题变化
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-        const newThemeMode = e.matches ? 'dark' : 'light';
+    // 主题变化监听
+    const observer = new MutationObserver(() => {
+        const newThemeMode = detectThemeMode();
         applyThemeStyles(newThemeMode);
     });
     
-    // 添加调试日志
-    console.log('设备页面已加载，当前主题:', themeMode);
+    observer.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
     
-    // 添加全局错误捕获
-    window.addEventListener('error', function(e) {
-        console.error('页面发生错误:', e.error);
-        console.error('错误位置:', e.filename, ':', e.lineno);
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        const newThemeMode = detectThemeMode();
+        applyThemeStyles(newThemeMode);
     });
 };
 </script>
