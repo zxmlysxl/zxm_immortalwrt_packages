@@ -309,6 +309,14 @@ function refreshDevices() {
 
 // 其他函数保持原样
 function addToRules(type, target, hostname) {
+    // 调试日志 - 修复按钮点击无响应问题
+    console.log('[znetcontrol] 点击添加规则:', {
+        type: type,
+        target: target,
+        hostname: hostname,
+        timestamp: new Date().toISOString()
+    });
+    
     if (!target || target === '未知') {
         showToast('无法添加，目标地址无效', 'error');
         return;
