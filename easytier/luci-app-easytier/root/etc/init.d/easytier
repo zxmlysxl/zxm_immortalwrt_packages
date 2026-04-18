@@ -103,7 +103,7 @@ check_bin() {
 	# 如果获取失败，从 UCI 配置或使用默认版本
 	if [ -z "$tag" ]; then
 		tag=$(uci -q get easytier.@easytier[0].fallback_version)
-		[ -z "$tag" ] && tag="v2.5.0"
+		[ -z "$tag" ] && tag="v2.6.0"
 	fi
 	echo "$(date '+%Y-%m-%d %H:%M:%S') easytier : 开始在线下载${tag}版本，${proxy}https://github.com/EasyTier/EasyTier/releases/download/${tag}/easytier-linux-${cpucore}-${tag}.zip下载较慢耐心等候" >>/tmp/easytier.log
 	echo "$(date '+%Y-%m-%d %H:%M:%S') easytier : 开始在线下载${tag}版本，${proxy}https://github.com/EasyTier/EasyTier/releases/download/${tag}/easytier-linux-${cpucore}-${tag}.zip下载较慢耐心等候" >>/tmp/easytierweb.log
@@ -658,6 +658,7 @@ start_web() {
 	api_port="$(uci -q get easytier.@easytier[0].web_api_port)"
 	html_port="$(uci -q get easytier.@easytier[0].web_html_port)"
 	weblog="$(uci -q get easytier.@easytier[0].web_weblog)"
+    weblog="${weblog:-off}"
 	api_host="$(uci -q get easytier.@easytier[0].web_api_host)"
 	geoip_db="$(uci -q get easytier.@easytier[0].web_geoip_db)"
 	fw_web="$(uci -q get easytier.@easytier[0].web_fw_web || echo 0)"
