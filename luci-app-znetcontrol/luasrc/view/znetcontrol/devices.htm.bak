@@ -47,7 +47,7 @@ function escapeForJs(str) {
         .replace(/'/g, "\\'")
         .replace(/"/g, '\\"')
         .replace(/\n/g, '\\n')
-        .replace(/\r/g, '')
+        .replace(/\r/g, '\\r')
         .replace(/\t/g, '\\t')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
