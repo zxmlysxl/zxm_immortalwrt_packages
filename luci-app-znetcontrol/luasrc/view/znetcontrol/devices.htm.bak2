@@ -739,6 +739,7 @@ style.textContent = `
         transform: translateY(-2px);
         box-shadow: 0 4px 8px rgba(0,0,0,0.15);
     }
+`;
 
     /* 弹窗样式 */
     .confirm-dialog-overlay {
@@ -825,7 +826,6 @@ style.textContent = `
         font-size: 14px;
         white-space: nowrap;
     }
-`;
 
 document.head.appendChild(style);
 
