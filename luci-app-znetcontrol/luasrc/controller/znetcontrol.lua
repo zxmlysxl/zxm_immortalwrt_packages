@@ -324,12 +324,25 @@ function action_get_status(return_data)
     -- nftables规则计数
     local nft_count = 0
     if is_running then
-        -- 检测网关模式
+        -- 检测网关模式（修复：按默认路由出口接口判断）
         local default_gw = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $3}'")
+        local default_dev = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $5}'")
         local lan_iface = sys.exec("uci get network.lan.ifname 2>/dev/null || echo br-lan")
-        local my_lan_ip = sys.exec("ip -4 addr show dev " .. lan_iface .. " 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -1")
+        -- 清理换行
+        default_gw = default_gw:gsub("%s+", "")
+        default_dev = default_dev:gsub("%s+", "")
+        lan_iface = lan_iface:gsub("%s+", "")
         
-        if default_gw and default_gw ~= "" and default_gw ~= my_lan_ip and default_gw ~= "0.0.0.0" then
+        local gateway_mode = ""
+        if default_dev ~= "" and default_dev ~= lan_iface then
+            gateway_mode = "main"  -- 默认路由出口不是 LAN → 主路由
+        elseif default_gw == "" or default_gw == "0.0.0.0" then
+            gateway_mode = "main"
+        else
+            gateway_mode = "bypass"  -- 旁路由
+        end
+        
+        if gateway_mode == "bypass" then
             -- 旁路由模式，检查inet表
             nft_count = tonumber(sys.exec("nft list table inet znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
         else
@@ -342,6 +355,7 @@ function action_get_status(return_data)
     
     local status = {
         running = is_running,
+        gateway_mode = gateway_mode,
         total_rules = total_count,
         enabled_rules = enabled_count,
         active_rules = active_count,

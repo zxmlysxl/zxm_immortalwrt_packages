@@ -18,6 +18,12 @@
             </div>
         </div>
         <div class="cbi-value">
+            <label class="cbi-label"><%:路由模式%></label>
+            <div class="cbi-value-field">
+                <span id="gateway-mode" class="label">--</span>
+            </div>
+        </div>
+        <div class="cbi-value">
             <label class="cbi-label"><%:进程PID%></label>
             <div class="cbi-value-field">
                 <code id="service-pid">--</code>
@@ -127,6 +133,7 @@ function refreshStatus(force = false) {
 function updateStatusDisplay(data) {
     const statusEl = document.getElementById('service-status');
     const pidEl = document.getElementById('service-pid');
+    const gwEl = document.getElementById('gateway-mode');
     
     // 安全处理数据
     const isRunning = data && (data.running === true || data.running === 'true' || data.running === '1');
@@ -137,6 +144,28 @@ function updateStatusDisplay(data) {
     } else {
         statusEl.textContent = '已停止';
         statusEl.className = 'label error';
+    }
+    
+    // 路由模式
+    if (data && data.gateway_mode) {
+        if (data.gateway_mode === 'main') {
+            gwEl.textContent = '主路由模式';
+            gwEl.className = 'label';
+            gwEl.style.backgroundColor = '#d4edda';
+            gwEl.style.color = '#155724';
+            gwEl.style.border = '1px solid #c3e6cb';
+        } else if (data.gateway_mode === 'bypass') {
+            gwEl.textContent = '旁路由模式';
+            gwEl.className = 'label';
+            gwEl.style.backgroundColor = '#fff3cd';
+            gwEl.style.color = '#856404';
+            gwEl.style.border = '1px solid #ffeeba';
+        } else {
+            gwEl.textContent = '未检测';
+            gwEl.className = 'label';
+        }
+    } else {
+        gwEl.textContent = '--';
     }
     
     // PID显示
