@@ -56,6 +56,12 @@ config_t_get() {
     echo "${ret:-$default}"
 }
 
+# 读取 settings 命名段（非索引段）
+config_s_get() {
+    local ret=$(uci -q get "${NAME}.settings.${1}")
+    echo "${ret:-$2}"
+}
+
 config_t_set() {
     local index=${4:-0}
     local ret=$(uci -q set "${NAME}.@${1}[${index}].${2}=${3}")
@@ -346,17 +352,23 @@ check_list() {
 
 detect_gateway_mode() {
     local default_gw=$(ip route show default 2>/dev/null | head -1 | awk '{print $3}')
+    local default_dev=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
     local lan_iface=$(uci get network.lan.ifname 2>/dev/null || echo "br-lan")
     local my_lan_ip=$(ip -4 addr show dev "$lan_iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -1)
     
-    if [ -z "$default_gw" ] || [ "$default_gw" = "$my_lan_ip" ] || [ "$default_gw" = "0.0.0.0" ]; then
+    # 修复：按默认路由的出口接口判断，不按 IP 对比
+    # 如果默认路由走的是 WAN 口（不是 LAN 接口），说明是主路由
+    if [ -n "$default_dev" ] && [ "$default_dev" != "$lan_iface" ]; then
         GATEWAY_MODE="main"
-        info "检测为主路由模式"
+        info "检测为主路由模式（默认路由经 $default_dev，LAN: $lan_iface）"
+    elif [ -z "$default_gw" ] || [ "$default_gw" = "0.0.0.0" ]; then
+        GATEWAY_MODE="main"
+        info "检测为主路由模式（无上游网关）"
     else
         GATEWAY_MODE="bypass"
         BYPASS_GATEWAY="$default_gw"
         BYPASS_GATEWAY_MAC=$(arp -n "$default_gw" 2>/dev/null | awk '{print $3}' | grep -v "HWaddress")
-        info "检测为旁路由模式，网关: $default_gw"
+        info "检测为旁路由模式，网关: $default_gw（经 $default_dev）"
     fi
 }
 
@@ -779,6 +791,23 @@ case "$crrun" in
         mkdir -p /var/log /var/run 2>/dev/null
         touch "$IDLIST" 2>/dev/null
         
+        # ===== 硬件卸载控制 =====
+        local hw_control=$(config_s_get hw_offload_control "0")
+        if [ "$hw_control" = "1" ]; then
+            local hw_enabled=$(uci -q get firewall.@defaults[0].flow_offloading_hw)
+            if [ "$hw_enabled" = "1" ]; then
+                # 保存原始状态
+                uci set znetcontrol.settings.hw_offload_backup="1"
+                uci commit znetcontrol
+                # 关闭硬件卸载
+                uci set firewall.@defaults[0].flow_offloading_hw='0'
+                uci commit firewall
+                fw4 reload 2>/dev/null || true
+                info "硬件流量卸载已关闭（hw_offload_control=1）"
+            fi
+        fi
+        # ===== 结束 =====
+        
         info "从配置文件加载规则..."
         
         enabled_ids=$(get_enabled_rule_ids)
@@ -808,6 +837,17 @@ case "$crrun" in
         ;;
         
     "stop")
+        # ===== 恢复硬件卸载 =====
+        local backed_up=$(uci -q get znetcontrol.settings.hw_offload_backup)
+        if [ "$backed_up" = "1" ]; then
+            uci set firewall.@defaults[0].flow_offloading_hw='1'
+            uci commit firewall
+            fw4 reload 2>/dev/null || true
+            uci delete znetcontrol.settings.hw_offload_backup >/dev/null 2>&1
+            uci commit znetcontrol
+            info "硬件流量卸载已恢复"
+        fi
+        # ===== 结束 =====
         info "停止时间控制服务"
         stop_timecontrol
         info "所有防火墙规则已清除"

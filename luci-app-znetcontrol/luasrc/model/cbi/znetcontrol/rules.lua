@@ -8,7 +8,22 @@ m = Map("znetcontrol", translate("上网管控规则"),
     "<br><span style='color: #007bff;'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>" ..
     "<br><span style='color: #28a745;'>支持格式：1.单个IP: 192.168.32.10 2. IP范围: 192.168.32.10-192.168.32.100 3. CIDR: 192.168.32.10/24 4. MAC地址: 00:11:22:33:44:55</span>")
 
--- ========== 新增：检查启用规则数量并管理服务 ==========
+-- ========== 新增：全局设置段 ==========
+gs = m:section(TypedSection, "settings", translate("系统设置"),
+    translate("全局设置，保存后自动生效"))
+gs.anonymous = true
+gs.addremove = false
+
+-- 管控时自动关闭硬件卸载
+hw_off = gs:option(Flag, "hw_offload_control", translate("硬件卸载控制"),
+    translate("开启后，znetcontrol 启动时会自动关闭硬件流量卸载（flow_offloading_hw），" ..
+    "停止时自动恢复。用于解决硬件卸载导致 nftables 管控规则失效的问题。"))
+hw_off.default = false
+hw_off.rmempty = false
+hw_off.description = translate("注意：硬件加速关闭后，路由器 NAT 转发走 CPU 软路由，") ..
+    "<br>" .. translate("可能影响极限下载速度，日常使用无明显感知。")
+
+-- ========== 结束：全局设置段 ==========
 local function manage_service_by_rules()
     -- 统计启用规则数量
     local enabled_count = 0

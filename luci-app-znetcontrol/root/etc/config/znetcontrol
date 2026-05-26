@@ -1,7 +1,11 @@
-# 全局设置（只保留日志级别）
+# 全局设置
 config global 'settings'
     option enabled '1'
     option log_level 'info'
+    # 管控时自动关闭硬件流量卸载（0=禁用, 1=开启）
+    # 开启后，znetcontrol启动时会关闭 flow_offloading_hw，
+    # 停止时自动恢复。用于解决硬件卸载导致 nftables 规则失效的问题。
+    option hw_offload_control '0'
     
 # 规则示例
 # config device 'rule1'
