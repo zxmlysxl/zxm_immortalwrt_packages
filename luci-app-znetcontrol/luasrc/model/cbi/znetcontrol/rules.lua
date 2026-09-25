@@ -288,8 +288,8 @@ function days.validate(self, value, section)
     if value:match("^%d+(,%d+)*$") then
         local valid = true
         for day in value:gmatch("%d+") do
-            day = tonumber(day)
-            if not day or day < 0 or day > 7 then
+            local d = tonumber(day)
+            if not d or d < 0 or d > 7 then
                 valid = false
                 break
             end
