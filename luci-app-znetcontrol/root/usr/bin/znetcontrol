@@ -318,6 +318,38 @@ check_time() {
     fi
 }
 
+expand_week_pattern() {
+    local input="$1"
+    local result=""
+    local first=1
+    
+    [ -z "$input" ] && return
+    
+    IFS=',' read -ra PARTS <<< "$input"
+    for part in "${PARTS[@]}"; do
+        part=$(echo "$part" | tr -d ' ')
+        [ -z "$part" ] && continue
+        
+        if echo "$part" | grep -qE '^[0-9]+-[0-9]+$'; then
+            local start=$(echo "$part" | cut -d'-' -f1)
+            local end=$(echo "$part" | cut -d'-' -f2)
+            if [ -n "$start" ] && [ -n "$end" ] && [ "$start" -ge 1 ] && [ "$end" -le 7 ] && [ "$start" -le "$end" ]; then
+                local i=$start
+                while [ $i -le $end ]; do
+                    [ $first -eq 1 ] && result="$i" || result="$result|$i"
+                    first=0
+                    i=$((i+1))
+                done
+            fi
+        else
+            [ $first -eq 1 ] && result="$part" || result="$result|$part"
+            first=0
+        fi
+    done
+    
+    echo "$result"
+}
+
 check_list() {
     local i=$1
     local start_time=$(config_t_get device timestart "$i")
@@ -325,10 +357,12 @@ check_list() {
     local wweek=$(config_t_get device week "$i")
     local current_weekday=$(date +%u)
     
-    if [ "$wweek" != "0" ]; then
-        local week_pattern=$(echo "$wweek" | sed 's/,/\|/g; s/-/\|/g')
-        if ! echo "$current_weekday" | grep -q "^\($week_pattern\)$"; then
-            dbg "规则 $i 不在生效星期内（配置: $wweek, 当前: $current_weekday）"
+    if [ "$wweek" != "0" ] && [ -n "$wweek" ]; then
+        # 展开星期模式（支持范围如1-4和列表如1,2,3,4）
+        local expanded
+        expanded=$(expand_week_pattern "$wweek")
+        if ! echo "$current_weekday" | grep -qE "^($expanded)$"; then
+            dbg "规则 $i 不在生效星期内（配置: $wweek -> $expanded, 当前: $current_weekday）"
             return 1
         fi
     fi

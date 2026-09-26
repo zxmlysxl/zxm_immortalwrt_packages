@@ -262,7 +262,7 @@ function days.validate(self, value, section)
     
     -- 检查是否是预设值
     local preset_values = {
-        "0", "1,2,3,4,5", "6,7", "1", "2", "3", "4", "5", "6", "7"
+        "0", "1,2,3,4,5", "6,7", "1,2,3,4", "1,2,3,4,5,6,7", "1", "2", "3", "4", "5", "6", "7"
     }
     for _, v in ipairs(preset_values) do
         if value == v then
