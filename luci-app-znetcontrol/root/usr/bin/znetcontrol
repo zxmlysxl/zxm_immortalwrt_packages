@@ -326,7 +326,7 @@ check_list() {
     local current_weekday=$(date +%u)
     
     if [ "$wweek" != "0" ]; then
-        local week_pattern=$(echo "$wweek" | sed 's/,/\\|/g')
+        local week_pattern=$(echo "$wweek" | sed 's/,/\|/g; s/-/\|/g')
         if ! echo "$current_weekday" | grep -q "^\($week_pattern\)$"; then
             dbg "规则 $i 不在生效星期内（配置: $wweek, 当前: $current_weekday）"
             return 1

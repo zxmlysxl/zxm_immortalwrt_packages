@@ -289,7 +289,7 @@ function days.validate(self, value, section)
         local valid = true
         for day in value:gmatch("%d+") do
             local d = tonumber(day)
-            if not d or d < 0 or d > 7 then
+            if not d or d < 1 or d > 7 then
                 valid = false
                 break
             end
