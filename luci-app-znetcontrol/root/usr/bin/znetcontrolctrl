@@ -92,10 +92,31 @@ is_weekday_in_range() {
     
     # 如果配置为"0"，表示每天
     [ "$configured_weekdays" = "0" ] && return 0
+    [ -z "$configured_weekdays" ] && return 0
     
-    # 检查逗号分隔的列表
-    for ww in $(echo $configured_weekdays | tr ',' ' '); do
-        [ "$current_weekday" = "$ww" ] && return 0
+    # 把逗号替换成空格，逐项处理
+    local parts=$(echo "$configured_weekdays" | tr ',' ' ')
+    
+    for part in $parts; do
+        part=$(echo "$part" | tr -d ' ')
+        [ -z "$part" ] && continue
+        
+        # 范围格式：1-5
+        if echo "$part" | grep -qE '^[0-9]+-[0-9]+$'; then
+            local start=$(echo "$part" | cut -d'-' -f1)
+            local end=$(echo "$part" | cut -d'-' -f2)
+            if [ -n "$start" ] && [ -n "$end" ] && \
+               [ "$start" -ge 1 ] && [ "$end" -le 7 ] && [ "$start" -le "$end" ]; then
+                if [ "$current_weekday" -ge "$start" ] && [ "$current_weekday" -le "$end" ]; then
+                    return 0
+                fi
+            fi
+        else
+            # 单个数字格式：3 或 1,2,3,4,5
+            if [ "$current_weekday" = "$part" ]; then
+                return 0
+            fi
+        fi
     done
     
     return 1
