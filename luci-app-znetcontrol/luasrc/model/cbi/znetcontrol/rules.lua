@@ -285,20 +285,19 @@ function days.validate(self, value, section)
     end
     
     -- 格式2：逗号分隔 1,2,3
-    if value:match("^%d+(,%d+)*$") then
-        local valid = true
-        for day in value:gmatch("%d+") do
-            local d = tonumber(day)
-            if not d or d < 1 or d > 7 then
-                valid = false
-                break
-            end
+    -- 使用 gmatch 逐个提取数字验证（避免 Lua pattern 中 + 是字面量的问题）
+    local valid = true
+    local found = false
+    for day in value:gmatch("%d+") do
+        found = true
+        local d = tonumber(day)
+        if not d or d < 1 or d > 7 then
+            valid = false
+            break
         end
-        if valid then
-            return value
-        else
-            return nil, translate("自定义星期列表无效（请输入0-7之间的数字，如：1,2,3）")
-        end
+    end
+    if found and valid then
+        return value
     end
     
     -- 无效格式
