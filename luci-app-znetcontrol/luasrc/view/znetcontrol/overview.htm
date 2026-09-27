@@ -34,6 +34,12 @@
     <fieldset class="cbi-section">
         <legend><%:统计信息%></legend>
         <div class="cbi-value">
+            <label class="cbi-label"><%:插件版本%></label>
+            <div class="cbi-value-field">
+                <code id="app-version">--</code>
+            </div>
+        </div>
+        <div class="cbi-value">
             <label class="cbi-label"><%:总规则数%></label>
             <div class="cbi-value-field">
                 <code id="total-rules">0</code>
@@ -173,6 +179,11 @@ function updateStatusDisplay(data) {
         pidEl.textContent = data.pid;
     } else {
         pidEl.textContent = '--';
+    }
+    
+    // 版本显示
+    if (data && data.version) {
+        document.getElementById('app-version').textContent = data.version;
     }
     
     // 规则统计

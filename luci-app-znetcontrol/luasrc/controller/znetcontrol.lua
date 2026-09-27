@@ -31,7 +31,7 @@ end
 -- 版本检测函数（不使用版本文件）
 function get_app_version()
     local nixio = require("nixio")
-    local version = "2.0.0"  -- 默认版本号
+    local version = "2.1.1"
     
     -- 尝试从opkg包信息读取
     local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
@@ -46,22 +46,6 @@ function get_app_version()
                 end
             end
             fd:close()
-        end
-    else
-        -- 如果opkg文件不存在，尝试从另一个位置查找
-        control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
-        if nixio.fs.access(control_file) then
-            local fd = io.open(control_file, "r")
-            if fd then
-                for line in fd:lines() do
-                    local ctrl_match = line:match("^Version:%s*(.+)")
-                    if ctrl_match then
-                        version = ctrl_match
-                        break
-                    end
-                end
-                fd:close()
-            end
         end
     end
        
@@ -104,15 +88,13 @@ function action_quick_add()
     local uci = require("luci.model.uci").cursor()
     local sys = require("luci.sys")
     
-    -- 读取POST参数
     http.prepare_content("application/json")
     local data = http.formvalue()
     
     local target = data and data.target
-    local target_type = data and data.type  -- "mac" 或 "ip"
+    local target_type = data and data.type
     local name = data and data.name
     
-    -- 调试日志
     log("快速添加规则 - 接收参数:", {
         target = target,
         type = target_type,
@@ -127,11 +109,9 @@ function action_quick_add()
         return
     end
     
-    -- 标准化目标地址
     local original_target = target
     target = target:upper():gsub("%s+", ""):gsub("-", ":")
     
-    -- 检查是否已存在相同规则
     local exists = false
     local existing_name = ""
     uci:foreach("znetcontrol", "device", function(s)
@@ -149,9 +129,7 @@ function action_quick_add()
         return
     end
     
-    -- 生成规则名称
     if not name or name == "" or name == "undefined" then
-        -- 前端没有传名称，则生成一个
         if target_type == "mac" then
             local mac_clean = target:gsub(":", ""):gsub("-", "")
             local suffix = mac_clean:sub(-6) or "未知"
@@ -163,10 +141,8 @@ function action_quick_add()
         end
     end
     
-    -- 清理规则名称
     local original_name = name
     
-    -- 移除常见的域名后缀
     name = name:gsub("%.lan$", "")
     name = name:gsub("%.local$", "")
     name = name:gsub("%.home$", "")
@@ -174,16 +150,12 @@ function action_quick_add()
     name = name:gsub("%.com$", "")
     name = name:gsub("%.net$", "")
     name = name:gsub("%.org$", "")
-    
-    -- 清理特殊字符（防止注入和安全问题）
     name = name:gsub("[<>\"'`]", "")
     
-    -- 限制名称长度
     if #name > 50 then
         name = name:sub(1, 50)
     end
     
-    -- 确保名称不为空
     if name == "" then
         if target_type == "mac" then
             local mac_clean = target:gsub(":", ""):gsub("-", "")
@@ -196,21 +168,19 @@ function action_quick_add()
     
     log("清理后规则名称:", name, "（原始:", original_name .. "）")
     
-    -- 创建新规则 - 添加默认的开始时间和结束时间
     local section_id = uci:section("znetcontrol", "device", nil, {
         name = name,
         target = target,
         enable = "1",
-        week = "0",  -- 默认每天
-        chain = "forward",  -- 默认普通控制
-        timestart = "00:00",  -- 默认开始时间
-        timeend = "00:00",    -- 默认结束时间（表示全天）
+        week = "0",
+        chain = "forward",
+        timestart = "00:00",
+        timeend = "00:00",
         comment = "从在线设备页面快速添加"
     })
     
     uci:commit("znetcontrol")
     
-    -- 记录日志
     log("规则添加成功", {
         id = section_id,
         name = name,
@@ -218,7 +188,6 @@ function action_quick_add()
         original_target = original_target
     })
     
-    -- 重新启动服务使规则生效
     local restart_result = sys.call("/etc/init.d/znetcontrol restart >/dev/null 2>&1 &")
     
     http.write_json({
@@ -236,16 +205,14 @@ function action_overview()
     local http = require("luci.http")
     local sys = require("luci.sys")
     
-    -- 获取基本状态
     local status_data = {}
     local success, result = pcall(function()
-        return action_get_status(true) -- 传递 true 表示直接返回数据
+        return action_get_status(true)
     end)
     
     if success then
         status_data = result
     else
-        -- 如果获取失败，使用默认值
         status_data = {
             running = false,
             total_rules = 0,
@@ -256,13 +223,13 @@ function action_overview()
         }
     end
     
-    -- 渲染模板并传递数据
     http.prepare_content("text/html")
     luci.template.render("znetcontrol/overview", {
         status = status_data
     })
 end
 
+-- ========== 修复：gateway_mode 作用域问题 ==========
 function action_get_status(return_data)
     local sys = require("luci.sys")
     local uci = require("luci.model.uci").cursor()
@@ -295,7 +262,6 @@ function action_get_status(return_data)
     local enabled_count = 0
     local active_count = 0
     
-    -- 统计配置规则
     uci:foreach("znetcontrol", "device", function(s)
         if s[".type"] == "device" then
             total_count = total_count + 1
@@ -306,7 +272,6 @@ function action_get_status(return_data)
         end
     end)
     
-    -- 统计生效规则（从IDLIST）
     local idlist_file = "/var/run/znetcontrol.idlist"
     if nixio.fs.access(idlist_file) then
         local fd = io.open(idlist_file, "r")
@@ -321,35 +286,47 @@ function action_get_status(return_data)
         end
     end
     
-    -- nftables规则计数
+    -- nftables规则计数 + 网关模式检测
     local nft_count = 0
+    local gateway_mode = ""
+    
     if is_running then
-        -- 检测网关模式（修复：按默认路由出口接口判断）
-        local default_gw = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $3}'")
-        local default_dev = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $5}'")
-        local lan_iface = sys.exec("uci get network.lan.ifname 2>/dev/null || echo br-lan")
-        -- 清理换行
+        local default_gw = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $3}'") or ""
+        local default_dev = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $5}'") or ""
+        local lan_iface = sys.exec("uci get network.lan.ifname 2>/dev/null || echo br-lan") or "br-lan"
         default_gw = default_gw:gsub("%s+", "")
         default_dev = default_dev:gsub("%s+", "")
         lan_iface = lan_iface:gsub("%s+", "")
         
-        local gateway_mode = ""
         if default_dev ~= "" and default_dev ~= lan_iface then
-            gateway_mode = "main"  -- 默认路由出口不是 LAN → 主路由
+            gateway_mode = "main"
         elseif default_gw == "" or default_gw == "0.0.0.0" then
             gateway_mode = "main"
         else
-            gateway_mode = "bypass"  -- 旁路由
+            gateway_mode = "bypass"
         end
         
         if gateway_mode == "bypass" then
-            -- 旁路由模式，检查inet表
             nft_count = tonumber(sys.exec("nft list table inet znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
         else
-            -- 主路由模式，检查bridge和ip表
             local bridge_count = tonumber(sys.exec("nft list table bridge znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
             local ip_count = tonumber(sys.exec("nft list table ip znetcontrol 2>/dev/null | grep -c 'drop comment'")) or 0
             nft_count = bridge_count + ip_count
+        end
+    else
+        local default_dev = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $5}'") or ""
+        local default_gw = sys.exec("ip route show default 2>/dev/null | head -1 | awk '{print $3}'") or ""
+        local lan_iface = sys.exec("uci get network.lan.ifname 2>/dev/null || echo br-lan") or "br-lan"
+        default_dev = default_dev:gsub("%s+", "")
+        default_gw = default_gw:gsub("%s+", "")
+        lan_iface = lan_iface:gsub("%s+", "")
+        
+        if default_dev ~= "" and default_dev ~= lan_iface then
+            gateway_mode = "main"
+        elseif default_gw == "" or default_gw == "0.0.0.0" then
+            gateway_mode = "main"
+        else
+            gateway_mode = "bypass"
         end
     end
     
@@ -378,7 +355,6 @@ function action_get_status(return_data)
     http.write_json(status)
 end
 
--- ========== 新增：获取进程运行时间的函数 ==========
 function get_process_uptime(pid)
     local sys = require("luci.sys")
     local nixio = require("nixio")
@@ -387,17 +363,14 @@ function get_process_uptime(pid)
         return ""
     end
     
-    -- 简化：直接使用ps命令获取运行时间
     local ps_uptime = sys.exec("ps -o etime= -p " .. pid .. " 2>/dev/null")
     if ps_uptime and ps_uptime ~= "" then
-        -- 清理空白字符
         local trimmed = ps_uptime:gsub("%s+", "")
         if trimmed ~= "" then
             return trimmed
         end
     end
     
-    -- 备选方案：检查进程目录存在多久
     local proc_dir = "/proc/" .. pid
     if nixio.fs.access(proc_dir) then
         local stat_info = nixio.fs.stat(proc_dir)
@@ -406,7 +379,6 @@ function get_process_uptime(pid)
             local start_time = stat_info.mtime
             local uptime_seconds = now - start_time
             
-            -- 简单格式化
             if uptime_seconds >= 86400 then
                 local days = math.floor(uptime_seconds / 86400)
                 return days .. "天"
@@ -425,7 +397,6 @@ function get_process_uptime(pid)
     return ""
 end
 
--- ========== 服务控制函数 ==========
 function action_stop()
     local sys = require("luci.sys")
     local http = require("luci.http")
@@ -470,18 +441,17 @@ function action_firewall_status()
         blocked_count = 0,
         mac_count = 0,
         ip_count = 0,
-        mac_marked_count = 0,  -- 新增：标记的MAC数量
+        mac_marked_count = 0,
         devices = {},
         tables_found = {}
     }
     
-    -- 检查所有可能的表类型
     local tables_to_check = {
         {name = "inet znetcontrol", type = "inet"},
         {name = "ip znetcontrol", type = "ip"},
         {name = "ip6 znetcontrol", type = "ip6"},
         {name = "bridge znetcontrol", type = "bridge"},
-        {name = "inet znetcontrol_mark", type = "mark"}  -- 新增：标记表
+        {name = "inet znetcontrol_mark", type = "mark"}
     }
     
     for _, table_info in ipairs(tables_to_check) do
@@ -491,8 +461,6 @@ function action_firewall_status()
         if output and output ~= "" then
             status.table_exists = true
             status.tables_found[table_info.name] = true
-            
-            -- 分析这个表的规则
             analyze_nft_table(output, table_info.type, status)
         end
     end
@@ -502,7 +470,6 @@ function action_firewall_status()
 end
 
 function analyze_nft_table(output, table_type, status)
-    -- 统计这个表中的drop规则
     local drop_count = 0
     for _ in output:gmatch("drop comment") do
         drop_count = drop_count + 1
@@ -510,9 +477,7 @@ function analyze_nft_table(output, table_type, status)
     
     status.blocked_count = status.blocked_count + drop_count
     
-    -- 根据表类型分类统计
     if table_type == "bridge" then
-        -- bridge表处理MAC地址
         local has_mac_elements = false
         for line in output:gmatch("[^\r\n]+") do
             if line:match("elements =") and line:match("{") then
@@ -533,7 +498,6 @@ function analyze_nft_table(output, table_type, status)
         end
         
     elseif table_type == "ip" then
-        -- ip表处理IPv4地址
         local has_ip_elements = false
         for line in output:gmatch("[^\r\n]+") do
             if line:match("elements =") and line:match("{") then
@@ -554,7 +518,6 @@ function analyze_nft_table(output, table_type, status)
         end
         
     elseif table_type == "mark" then
-        -- 标记表统计
         for line in output:gmatch("[^\r\n]+") do
             if line:match("elements =") and line:match("{") then
                 if not line:match("elements = { }") then
@@ -576,7 +539,6 @@ function action_get_devices()
     local uci = require("luci.model.uci").cursor()
     local nixio = require("nixio")
     
-    -- 获取所有已配置的设备规则
     local configured_devices = {}
     uci:foreach("znetcontrol", "device", function(s)
         if s.target then
@@ -585,7 +547,6 @@ function action_get_devices()
         end
     end)
     
-    -- 兼容旧版本rule段
     uci:foreach("znetcontrol", "rule", function(s)
         if s.target then
             local target = s.target:upper():gsub("%s+", ""):gsub("-", ":")
@@ -598,7 +559,6 @@ function action_get_devices()
     
     local devices = {}
     
-    -- 方法1：使用多个命令组合获取更准确的设备信息
     local arp_cmd = "ip -4 neighbor show 2>/dev/null | grep -v FAILED || arp -n 2>/dev/null"
     local arp_output = sys.exec(arp_cmd)
     
@@ -610,21 +570,18 @@ function action_get_devices()
                 mac = mac:upper()
                 local hostname = "未知设备"
                 
-                -- 方法1：尝试从DNS反向解析
                 local dns_result = sys.exec("nslookup " .. ip .. " 2>/dev/null | grep 'name =' | head -1")
                 if dns_result and dns_result ~= "" then
                     local name = dns_result:match("name =%s*(.+)$")
                     if name then
-                        name = name:gsub("%.$", "")  -- 去掉末尾的点
+                        name = name:gsub("%.$", "")
                         if name ~= ip then
                             hostname = name
                         end
                     end
                 end
                 
-                -- 方法2：从DHCP租约文件获取（主要方法）
                 if hostname == "未知设备" then
-                    -- 读取所有DHCP租约文件
                     local dhcp_files = {
                         "/tmp/dhcp.leases",
                         "/var/dhcp.leases",
@@ -636,7 +593,6 @@ function action_get_devices()
                             local fd = io.open(dhcp_file, "r")
                             if fd then
                                 for lease_line in fd:lines() do
-                                    -- 租约格式通常是：时间戳 MAC地址 IP地址 主机名 客户端ID
                                     local parts = {}
                                     for part in lease_line:gmatch("%S+") do
                                         table.insert(parts, part)
@@ -647,7 +603,6 @@ function action_get_devices()
                                         local lease_ip = parts[3]
                                         local lease_hostname = parts[4]
                                         
-                                        -- 检查MAC或IP匹配
                                         if (lease_mac == mac or lease_ip == ip) and 
                                            lease_hostname and lease_hostname ~= "*" and 
                                            lease_hostname ~= "" then
@@ -663,7 +618,6 @@ function action_get_devices()
                     end
                 end
                 
-                -- 方法3：尝试从hosts文件获取
                 if hostname == "未知设备" then
                     local hosts_content = sys.exec("cat /etc/hosts 2>/dev/null | grep -w " .. ip)
                     if hosts_content and hosts_content ~= "" then
@@ -680,9 +634,7 @@ function action_get_devices()
                     end
                 end
                 
-                -- 方法4：尝试使用netbios或LLMNR
                 if hostname == "未知设备" then
-                    -- 尝试nmblookup（如果安装了samba）
                     local nmb_result = sys.exec("nmblookup -A " .. ip .. " 2>/dev/null | grep '<00>' | head -1")
                     if nmb_result and nmb_result ~= "" then
                         local nbname = nmb_result:match("^%s*(%S+)%s+")
@@ -692,7 +644,6 @@ function action_get_devices()
                     end
                 end
                 
-                -- 检查是否已在规则中
                 local mac_in_rules = configured_devices[mac] or false
                 local ip_in_rules = configured_devices[ip] or false
                 local is_configured = mac_in_rules or ip_in_rules
@@ -709,13 +660,10 @@ function action_get_devices()
         end
     end
     
-    -- 如果没有获取到任何设备，尝试备用方法
     if #devices == 0 then
-        -- 备用方法：使用cat /proc/net/arp
         local arp_content = sys.exec("cat /proc/net/arp 2>/dev/null")
         if arp_content and arp_content ~= "" then
             for line in arp_content:gmatch("[^\r\n]+") do
-                -- 跳过标题行
                 if not line:match("^IP address") then
                     local parts = {}
                     for part in line:gmatch("%S+") do
@@ -728,7 +676,6 @@ function action_get_devices()
                         local hostname = "未知设备"
                         
                         if mac and mac ~= "00:00:00:00:00:00" then
-                            -- 简单地从DHCP获取主机名
                             local lease = sys.exec("cat /tmp/dhcp.leases 2>/dev/null | grep -i '" .. mac:lower() .. "' | head -1")
                             if lease and lease ~= "" then
                                 local lease_parts = {}
@@ -786,17 +733,14 @@ function action_logs()
     local logs = {}
     local logfile = "/var/log/znetcontrol.log"
     
-    -- 确保日志文件存在
     if not nixio.fs.access(logfile) then
         sys.call("mkdir -p /var/log 2>/dev/null")
         sys.call("touch " .. logfile)
-        -- 添加初始日志
         local init_log = generate_startup_log()
         for _, line in ipairs(init_log) do
             table.insert(logs, line)
         end
     else
-        -- 读取日志文件
         local fd = io.open(logfile, "r")
         if fd then
             for line in fd:lines() do
@@ -806,7 +750,6 @@ function action_logs()
         end
     end
     
-    -- 限制日志行数（保留最近的5000行）
     if #logs > 5000 then
         local start_index = #logs - 4999
         local recent_logs = {}
@@ -824,7 +767,6 @@ function action_logs()
     http.write_json(logs)
 end
 
--- 生成启动日志
 function generate_startup_log()
     local logs = {}
     local current_time = os.date("%Y-%m-%d %H:%M:%S")
@@ -846,7 +788,6 @@ function generate_startup_log()
     return logs
 end
 
--- 清空日志
 function action_clear_logs()
     local sys = require("luci.sys")
     local nixio = require("nixio")
@@ -862,20 +803,16 @@ function action_clear_logs()
     http.header("Expires", "0")
     
     if nixio.fs.access(logfile) then
-        -- 备份当前日志
         local timestamp = os.date("%Y%m%d_%H%M%S")
         local backup_file = "/var/log/znetcontrol.log." .. timestamp
         
-        -- 备份当前日志
         local backup_result = os.execute(string.format('cp "%s" "%s" 2>/dev/null', logfile, backup_file))
         
-        -- 清空日志文件
         local fd = io.open(logfile, "w")
         if fd then
             fd:close()
             success = true
             
-            -- 添加初始日志
             local version = get_app_version()
             local init_log = string.format(
                 "%s - 日志已清空，开始新的日志记录\n%s - 系统启动\n%s - ====== 启动佐罗上网管控 v%s ======",
@@ -897,13 +834,12 @@ function action_clear_logs()
             message = "清空日志失败"
         end
     else
-        -- 创建新的日志文件
         local fd = io.open(logfile, "w")
         if fd then
             local version = get_app_version()
             local init_log = string.format(
                 "%s - 日志文件已创建\n%s - 系统启动 (v%s)",
-                os.date("%Y-%m-d %H:%M:%S"),
+                os.date("%Y-%m-%d %H:%M:%S"),
                 os.date("%Y-%m-%d %H:%M:%S"),
                 version
             )
@@ -940,7 +876,6 @@ function action_reload_rules()
     })
 end
 
--- 获取配置
 function action_get_config()
     local uci = require("luci.model.uci").cursor()
     local http = require("luci.http")
@@ -962,18 +897,15 @@ function action_get_config()
     http.write_json(config)
 end
 
--- 保存配置
 function action_save_config()
     local uci = require("luci.model.uci").cursor()
     local sys = require("luci.sys")
     local http = require("luci.http")
     
-    -- 读取POST数据
     local data = luci.http.content()
     local config = luci.jsonc.parse(data)
     
     if config then
-        -- 创建或更新settings段
         local section_id = uci:get("znetcontrol", "settings")
         if not section_id then
             uci:section("znetcontrol", "global", "settings", {
@@ -983,7 +915,6 @@ function action_save_config()
             })
         end
         
-        -- 保存所有配置
         local config_map = {
             log_level = "log_level",
             control_mode = "control_mode",
@@ -1012,5 +943,3 @@ function action_save_config()
         message = "配置已保存"
     })
 end
-
-
