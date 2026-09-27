@@ -325,8 +325,9 @@ expand_week_pattern() {
     
     [ -z "$input" ] && return
     
-    IFS=',' read -ra PARTS <<< "$input"
-    for part in "${PARTS[@]}"; do
+    # POSIX-compatible: replace commas with spaces, then parse word by word (ash has no read -a)
+    local parts=$(echo "$input" | tr ',' ' ')
+    for part in $parts; do
         part=$(echo "$part" | tr -d ' ')
         [ -z "$part" ] && continue
         
@@ -336,14 +337,22 @@ expand_week_pattern() {
             if [ -n "$start" ] && [ -n "$end" ] && [ "$start" -ge 1 ] && [ "$end" -le 7 ] && [ "$start" -le "$end" ]; then
                 local i=$start
                 while [ $i -le $end ]; do
-                    [ $first -eq 1 ] && result="$i" || result="$result|$i"
-                    first=0
+                    if [ $first -eq 1 ]; then
+                        result="$i"
+                        first=0
+                    else
+                        result="$result|$i"
+                    fi
                     i=$((i+1))
                 done
             fi
         else
-            [ $first -eq 1 ] && result="$part" || result="$result|$part"
-            first=0
+            if [ $first -eq 1 ]; then
+                result="$part"
+                first=0
+            else
+                result="$result|$part"
+            fi
         fi
     done
     
