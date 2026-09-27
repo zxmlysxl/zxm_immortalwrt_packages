@@ -376,7 +376,7 @@ check_list() {
     if [ "$wweek" != "0" ]; then
         local week_pattern=$(expand_week_pattern "$wweek")
         # Use awk for literal string match (grep -E treats | as alternation, not literal)
-        if ! echo "$current_weekday" | awk -v p="$week_pattern" 'BEGIN{split(p,a," "); for(k in a) if(a[k]==$0) exit 1}'; then
+        if ! echo "$current_weekday" | awk -v p="$week_pattern" 'BEGIN{split(p,a,"|"); for(k in a) if(a[k]==$0) exit 1}'; then
             dbg "规则 $i 不在生效星期内（配置: $wweek, 当前: $current_weekday）"
             return 1
         fi
