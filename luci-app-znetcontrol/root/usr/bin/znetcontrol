@@ -27,7 +27,8 @@ get_rule_display_name() {
     local id=$1
     name=config_t_get device name "$id"
 
-    local name    local target=$(config_t_get device target "$id")
+        target=$(config_t_get device target "$id")
+        local target
     
     if [ -z "$name" ] || [ "$name" = "新规则" ]; then
         if [ -n "$target" ]; then
@@ -43,13 +44,13 @@ get_rule_display_name() {
 config_get_type() {
     ret=uci -q get "${NAME}.${1}"
 
-    local ret    echo "${ret:=$2}"
+        echo "${ret:=$2}"
 }
 
 config_n_get() {
     ret=uci -q get "${NAME}.${1}.${2}"
 
-    local ret    echo "${ret:=$3}"
+        echo "${ret:=$3}"
 }
 
 config_t_get() {
@@ -57,14 +58,14 @@ config_t_get() {
     local default=$4
     ret=uci -q get "${NAME}.@${1}[${index}].${2}"
 
-    local ret    echo "${ret:-$default}"
+        echo "${ret:-$default}"
 }
 
 # 读取 settings 命名段（非索引段）
 config_s_get() {
     ret=uci -q get "${NAME}.settings.${1}"
 
-    local ret    echo "${ret:-$2}"
+        echo "${ret:-$2}"
 }
 
 config_t_set() {
@@ -176,7 +177,7 @@ convert_to_old_format() {
     local target="$1"
     parsed_result=parse_target "$target"
 
-    local parsed_result    [ $? -ne 0 ] && return 1
+        [ $? -ne 0 ] && return 1
     
     IFS=':' read -r type subtype value <<< "$parsed_result"
     
@@ -333,14 +334,14 @@ get_device_ip() {
 }
 
 check_time() {
-    local start=$1
-    local end=$2
-    current=date +%H%M
-
-    local current    local start_min=$((10#${start:0:2}*60 + 10#${start:3:2}))
-    end_min=(10#${end:0:2}*60 + 10#${end:3:2})
-
-    local end_min    local current_min=$((10#${current:0:2}*60 + 10#${current:2:2}))
+    local start="$1"
+    local end="$2"
+    local current start_min end_min current_min
+    
+    current=$(date +%H%M)
+    start_min=$(echo "$start" | awk -F: '{print $1 * 60 + $2}')
+    end_min=$(echo "$end" | awk -F: '{print $1 * 60 + $2}')
+    current_min=$(echo "$current" | awk -F: '{print $1 * 60 + $2}')
     
     if [ "$start_min" -lt "$end_min" ]; then
         [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
@@ -358,7 +359,7 @@ expand_week_pattern() {
 
     parts=echo "$input" | tr ',' ' '
 
-    local parts    local part start end i
+        local part start end i
 
     for part in $parts; do
         part=$(echo "$part" | tr -d ' ')
@@ -396,10 +397,12 @@ check_list() {
     local i=$1
     start_time=config_t_get device timestart "$i"
 
-    local start_time    local end_time=$(config_t_get device timeend "$i")
+        end_time=$(config_t_get device timeend "$i")
+        local end_time
     wweek=config_t_get device week "$i"
 
-    local wweek    local current_weekday=$(date +%u)
+        current_weekday=$(date +%u)
+        local current_weekday
     
     if [ "$wweek" != "0" ] && [ -n "$wweek" ]; then
         # 展开星期模式（支持范围如1-4和列表如1,2,3,4）
@@ -431,10 +434,12 @@ check_list() {
 detect_gateway_mode() {
     default_gw=ip route show default 2>/dev/null | head -1 | awk '{print $3}'
 
-    local default_gw    local default_dev=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
+        default_dev=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
+        local default_dev
     lan_iface=uci get network.lan.ifname 2>/dev/null || echo "br-lan"
 
-    local lan_iface    local my_lan_ip=$(ip -4 addr show dev "$lan_iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -1)
+        my_lan_ip=$(ip -4 addr show dev "$lan_iface" 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -1)
+        local my_lan_ip
     
     # 修复：按默认路由的出口接口判断，不按 IP 对比
     # 如果默认路由走的是 WAN 口（不是 LAN 接口），说明是主路由
@@ -599,7 +604,8 @@ timeadd() {
     local id=$1
     target=config_t_get device target "$id"
 
-    local target    local chain=$(config_t_get device chain "$id" "forward")
+        chain=$(config_t_get device chain "$id" "forward")
+        local chain
     [ -z "$target" ] && return
     
     if [ -z "$GATEWAY_MODE" ]; then
@@ -608,11 +614,11 @@ timeadd() {
     
     display_name=get_rule_display_name "$id"
 
-    local display_name    info "添加设备控制: 【$display_name】($target)，模式: $GATEWAY_MODE"
+        info "添加设备控制: 【$display_name】($target)，模式: $GATEWAY_MODE"
     
     parsed_result=parse_target "$target"
 
-    local parsed_result    if [ $? -ne 0 ]; then
+        if [ $? -ne 0 ]; then
         dbg "无法解析目标地址: $target"
         return
     fi
@@ -653,17 +659,18 @@ timedel() {
     local id=$1
     target=config_t_get device target "$id"
 
-    local target    local name=$(config_t_get device name "$id")
+        name=$(config_t_get device name "$id")
+        local name
     chain=config_t_get device chain "$id" "forward"
 
-    local chain    [ -z "$target" ] && return
+        [ -z "$target" ] && return
     
     display_name=get_rule_display_name "$id"
 
     local display_name    
     parsed_result=parse_target "$target"
 
-    local parsed_result    if [ $? -ne 0 ]; then
+        if [ $? -ne 0 ]; then
         dbg "无法解析目标地址: $target"
         return
     fi
