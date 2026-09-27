@@ -304,17 +304,20 @@ get_device_ip() {
 }
 
 check_time() {
-    local start=$1
-    local end=$2
-    local current=$(date +%H%M)
-    local start_min=$((10#${start:0:2}*60 + 10#${start:3:2}))
-    local end_min=$((10#${end:0:2}*60 + 10#${end:3:2}))
-    local current_min=$((10#${current:0:2}*60 + 10#${current:2:2}))
+    local start="$1"
+    local end="$2"
+    local current start_min end_min current_min
     
-    if [[ $start_min -lt $end_min ]]; then
-        [[ $current_min -ge $start_min && $current_min -lt $end_min ]]
+    current=$(date +%H%M)
+    # Unified awk: strips any colons, then extracts HH and MM (works for HH:MM and HHMM)
+    start_min=$(echo "$start" | awk '{gsub(/:/,""); print substr($0,1,2)*60+substr($0,3,2)}')
+    end_min=$(echo "$end" | awk '{gsub(/:/,""); print substr($0,1,2)*60+substr($0,3,2)}')
+    current_min=$(echo "$current" | awk '{print substr($0,1,2)*60+substr($0,3,2)}')
+    
+    if [ "$start_min" -lt "$end_min" ]; then
+        [ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ]
     else
-        [[ $current_min -ge $start_min || $current_min -lt $end_min ]]
+        [ "$current_min" -ge "$start_min" ] || [ "$current_min" -lt "$end_min" ]
     fi
 }
 
