@@ -322,28 +322,29 @@ expand_week_pattern() {
     local input="$1"
     local result=""
     local first=1
-    
-    [ -z "$input" ] && return
-    
-    # POSIX-compatible: replace commas with spaces, then parse word by word (ash has no read -a)
+
+    [ -z "$input" ] && return 1
+
     local parts=$(echo "$input" | tr ',' ' ')
+    local part start end i
+
     for part in $parts; do
         part=$(echo "$part" | tr -d ' ')
         [ -z "$part" ] && continue
-        
+
         if echo "$part" | grep -qE '^[0-9]+-[0-9]+$'; then
-            local start=$(echo "$part" | cut -d'-' -f1)
-            local end=$(echo "$part" | cut -d'-' -f2)
+            start=$(echo "$part" | cut -d'-' -f1)
+            end=$(echo "$part" | cut -d'-' -f2)
             if [ -n "$start" ] && [ -n "$end" ] && [ "$start" -ge 1 ] && [ "$end" -le 7 ] && [ "$start" -le "$end" ]; then
-                local i=$start
-                while [ $i -le $end ]; do
+                i=$start
+                while [ $i -le "$end" ]; do
                     if [ $first -eq 1 ]; then
                         result="$i"
                         first=0
                     else
                         result="$result|$i"
                     fi
-                    i=$((i+1))
+                    i=$((i + 1))
                 done
             fi
         else
@@ -355,7 +356,7 @@ expand_week_pattern() {
             fi
         fi
     done
-    
+
     echo "$result"
 }
 
