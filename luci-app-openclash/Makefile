@@ -1,91 +1,149 @@
-export PATH := $(PATH):`go env GOPATH`/bin
-export GO111MODULE=on
-LDFLAGS := -s -w
-NOWEB_TAG = $(shell [ ! -d web/frps/dist ] || [ ! -d web/frpc/dist ] && echo ',noweb')
-FRP_COMPAT_BASELINE_COUNT ?= 8
-FRP_COMPAT_FLOOR_VERSION ?= 0.61.0
+include $(TOPDIR)/rules.mk
 
-.PHONY: web web-ci frps-web frpc-web frps frpc e2e-compatibility-smoke e2e-compatibility e2e-compatibility-floor
+PKG_NAME:=luci-app-openclash
+PKG_VERSION:=0.47.156
+PKG_MAINTAINER:=vernesong <https://github.com/vernesong/OpenClash>
 
-all: env fmt web build
+PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
-build: frps frpc
+include $(INCLUDE_DIR)/package.mk
 
-env:
-	@go version
+define Package/$(PKG_NAME)/config
+	config PACKAGE_kmod-inet-diag
+	default y if PACKAGE_$(PKG_NAME)
 
-web: frps-web frpc-web
+	config PACKAGE_luci-compat
+	default y if PACKAGE_$(PKG_NAME)
 
-web-ci:
-	cd web && npm ci && npm run lint:check --workspace frps && npm run lint:check --workspace frpc && npm run test:unit && npm run build --workspace frps && npm run build --workspace frpc
+	config PACKAGE_kmod-nft-tproxy
+	default y if PACKAGE_firewall4
 
-frps-web:
-	$(MAKE) -C web/frps build
+	config PACKAGE_kmod-ipt-nat
+	default y if ! PACKAGE_firewall4
 
-frpc-web:
-	$(MAKE) -C web/frpc build
+	config PACKAGE_iptables-mod-tproxy
+	default y if ! PACKAGE_firewall4
 
-fmt:
-	go fmt ./...
+	config PACKAGE_iptables-mod-extra
+	default y if ! PACKAGE_firewall4
 
-fmt-more:
-	gofumpt -l -w .
+	config PACKAGE_dnsmasq_full_ipset
+	default y if ! PACKAGE_firewall4
 
-gci:
-	gci write -s standard -s default -s "prefix(github.com/fatedier/frp/)" ./
+	config PACKAGE_dnsmasq_full_nftset
+	default y if PACKAGE_firewall4
 
-vet:
-	go vet -tags "$(NOWEB_TAG)" ./...
+	config PACKAGE_ipset
+	default y if ! PACKAGE_firewall4
+endef
 
-frps:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frps$(NOWEB_TAG)" -o bin/frps ./cmd/frps
+define Package/$(PKG_NAME)
+	CATEGORY:=LuCI
+	SUBMENU:=3. Applications
+	TITLE:=LuCI support for clash
+	PKGARCH:=all
+	DEPENDS:=+dnsmasq-full +bash +curl +ca-bundle +ip-full \
+	+ruby +ruby-yaml +kmod-tun +unzip
+	MAINTAINER:=vernesong
+endef
 
-frpc:
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -tags "frpc$(NOWEB_TAG)" -o bin/frpc ./cmd/frpc
+define Package/$(PKG_NAME)/description
+    A LuCI support for clash
+endef
 
-test: gotest
+define Build/Prepare
+	$(CP) $(CURDIR)/root $(PKG_BUILD_DIR)
+	$(CP) $(CURDIR)/luasrc $(PKG_BUILD_DIR)
+	$(foreach po,$(wildcard ${CURDIR}/po/zh-cn/*.po), \
+		po2lmo $(po) $(PKG_BUILD_DIR)/$(patsubst %.po,%.lmo,$(notdir $(po)));)
+	chmod 0755 $(PKG_BUILD_DIR)/root/etc/init.d/openclash
+	chmod -R 0755 $(PKG_BUILD_DIR)/root/usr/share/openclash/
+	exit 0
+endef
 
-gotest:
-	go test -tags "$(NOWEB_TAG)" -v --cover ./assets/...
-	go test -tags "$(NOWEB_TAG)" -v --cover ./cmd/...
-	go test -tags "$(NOWEB_TAG)" -v --cover ./client/...
-	go test -tags "$(NOWEB_TAG)" -v --cover ./server/...
-	go test -tags "$(NOWEB_TAG)" -v --cover ./pkg/...
+define Build/Configure
+endef
 
-e2e:
-	./hack/run-e2e.sh
+define Build/Compile
+endef
 
-e2e-trace:
-	DEBUG=true LOG_LEVEL=trace ./hack/run-e2e.sh
+define Package/$(PKG_NAME)/conffiles
+endef
 
-e2e-compatibility-smoke: build
-	FRP_COMPAT_BASELINE_COUNT=1 ./hack/run-e2e-compatibility.sh
-
-e2e-compatibility: build
-	FRP_COMPAT_BASELINE_COUNT="$(FRP_COMPAT_BASELINE_COUNT)" ./hack/run-e2e-compatibility.sh
-
-e2e-compatibility-floor: build
-	FRP_COMPAT_BASELINE_VERSIONS="$(FRP_COMPAT_FLOOR_VERSION)" ./hack/run-e2e-compatibility.sh
-
-e2e-compatibility-last-frpc:
-	if [ ! -d "./lastversion" ]; then \
-		TARGET_DIRNAME=lastversion ./hack/download.sh; \
+define Package/$(PKG_NAME)/preinst
+#!/bin/sh
+	if [ -f "/etc/config/openclash" ] && [ ! -f "/tmp/openclash.bak" ]; then
+		cp -f "/etc/config/openclash" "/tmp/openclash.bak" >/dev/null 2>&1
+		cp -rf "/etc/openclash" "/tmp/openclash" >/dev/null 2>&1
+		cp -rf "/usr/share/openclash/ui" "/tmp/openclash_ui" >/dev/null 2>&1
+		cp -rf "/www/luci-static/resources/openclash/pac" "/tmp/pac" >/dev/null 2>&1
 	fi
-	FRPC_PATH="`pwd`/lastversion/frpc" ./hack/run-e2e.sh
-	rm -r ./lastversion
+	exit 0
+endef
 
-e2e-compatibility-last-frps:
-	if [ ! -d "./lastversion" ]; then \
-		TARGET_DIRNAME=lastversion ./hack/download.sh; \
+define Package/$(PKG_NAME)/postinst
+#!/bin/sh
+	exit 0
+endef
+
+define Package/$(PKG_NAME)/prerm
+#!/bin/sh
+	[ -n "$(pidof clash)" ] && /etc/init.d/openclash stop 2>/dev/null
+	if [ -f "/etc/config/openclash" ] && [ ! -f "/tmp/openclash.bak" ]; then
+		cp -f "/etc/config/openclash" "/tmp/openclash.bak" >/dev/null 2>&1
+		cp -rf "/etc/openclash" "/tmp/openclash" >/dev/null 2>&1
+		cp -rf "/usr/share/openclash/ui" "/tmp/openclash_ui" >/dev/null 2>&1
+		cp -rf "/www/luci-static/resources/openclash/pac" "/tmp/pac" >/dev/null 2>&1
 	fi
-	FRPS_PATH="`pwd`/lastversion/frps" ./hack/run-e2e.sh
-	rm -r ./lastversion
+	exit 0
+endef
 
-alltest: vet gotest e2e
-	
-clean:
-	rm -f ./bin/frpc
-	rm -f ./bin/frps
-	rm -rf ./lastversion
-	rm -rf ./.cache
-	rm -rf ./.compat
+define Package/$(PKG_NAME)/postrm
+#!/bin/sh
+	DEFAULT_DNSMASQ_CFGID="$$(uci -q show "dhcp.@dnsmasq[0]" | awk 'NR==1 {split($0, conf, /[.=]/); print conf[2]}' 2>/dev/null)"
+	if [ -f "/tmp/etc/dnsmasq.conf.$DEFAULT_DNSMASQ_CFGID" ]; then
+	   DNSMASQ_CONF_DIR="$$(awk -F '=' '/^conf-dir=/ {print $2}' "/tmp/etc/dnsmasq.conf.$DEFAULT_DNSMASQ_CFGID" 2>/dev/null)"
+	else
+	   DNSMASQ_CONF_DIR="/tmp/dnsmasq.d"
+	fi
+	DNSMASQ_CONF_DIR=$${DNSMASQ_CONF_DIR%*/}
+	rm -rf /etc/openclash >/dev/null 2>&1
+	rm -rf /etc/config/openclash >/dev/null 2>&1
+	rm -rf /tmp/openclash.log >/dev/null 2>&1
+	rm -rf /tmp/openclash_start.log >/dev/null 2>&1
+	rm -rf /tmp/openclash.change >/dev/null 2>&1
+	rm -rf /usr/share/openclash >/dev/null 2>&1
+	rm -rf /tmp/openclash_version_history.json >/dev/null 2>&1
+    rm -rf /tmp/openclash_cdn_info.json >/dev/null 2>&1
+	rm -rf ${DNSMASQ_CONF_DIR}/dnsmasq_openclash_custom_domain.conf >/dev/null 2>&1
+	rm -rf ${DNSMASQ_CONF_DIR}/dnsmasq_openclash_chnroute_pass.conf >/dev/null 2>&1
+	rm -rf ${DNSMASQ_CONF_DIR}/dnsmasq_openclash_chnroute6_pass.conf >/dev/null 2>&1
+	rm -rf /tmp/etc/openclash >/dev/null 2>&1
+	rm -rf /tmp/openclash_announcement >/dev/null 2>&1
+	rm -rf /www/luci-static/resources/openclash >/dev/null 2>&1
+	rm -rf /tmp/oix* >/dev/null 2>&1
+	rm -rf /tmp/openclash_oix_version.json >/dev/null 2>&1
+	rm -rf /tmp/openclash_version_history_* >/dev/null 2>&1
+	rm -rf /tmp/openclash_cdn_info_* >/dev/null 2>&1
+	sed -i '/OpenClash Append/,/OpenClash Append End/d' "/usr/lib/lua/luci/model/network.lua" >/dev/null 2>&1
+	sed -i '/.*kB maximum content size*/c\HTTP_MAX_CONTENT      = 1024*100		-- 100 kB maximum content size' /usr/lib/lua/luci/http.lua >/dev/null 2>&1
+	sed -i '/.*kB maximum content size*/c\export let HTTP_MAX_CONTENT = 1024*100;		// 100 kB maximum content size' /usr/share/ucode/luci/http.uc >/dev/null 2>&1
+	uci -q delete firewall.openclash
+	uci -q commit firewall
+	[ -f "/etc/config/ucitrack" ] && {
+	uci -q delete ucitrack.@openclash[-1]
+	uci -q commit ucitrack
+	}
+	rm -rf /tmp/luci-indexcache /tmp/luci-indexcache.* /var/luci-indexcache /var/luci-indexcache.* >/dev/null 2>&1
+	rm -rf /tmp/luci-modulecache /var/luci-modulecache >/dev/null 2>&1
+	exit 0
+endef
+
+define Package/$(PKG_NAME)/install
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/*.*.lmo $(1)/usr/lib/lua/luci/i18n/
+	$(CP) $(PKG_BUILD_DIR)/root/* $(1)/
+	$(CP) $(PKG_BUILD_DIR)/luasrc/* $(1)/usr/lib/lua/luci/
+endef
+
+$(eval $(call BuildPackage,$(PKG_NAME)))
