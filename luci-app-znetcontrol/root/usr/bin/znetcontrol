@@ -620,6 +620,11 @@ timedel() {
     local chain=$(config_t_get device chain "$id" "forward")
     [ -z "$target" ] && return
     
+    # 【修复】确保 GATEWAY_MODE 已检测，否则会走错删除分支
+    if [ -z "$GATEWAY_MODE" ]; then
+        detect_gateway_mode
+    fi
+    
     local display_name=$(get_rule_display_name "$id")
     
     local parsed_result=$(parse_target "$target")
@@ -774,8 +779,14 @@ show_status() {
     echo ""
 }
 
+# ========== 修复：stop_timecontrol 确保 GATEWAY_MODE 已检测 ==========
 stop_timecontrol() {
     info "停止时间控制服务"
+    
+    # 【修复】确保 GATEWAY_MODE 已检测，否则删除表时会走错分支导致残留
+    if [ -z "$GATEWAY_MODE" ]; then
+        detect_gateway_mode
+    fi
     
     # 先停止监控进程
     if [ -f "/var/run/znetcontrol.pid" ]; then
@@ -864,6 +875,22 @@ case "$crrun" in
         
         init_timecontrol
         
+        # ===== 【新增】清理禁用规则的残留 =====
+        all_index=0
+        while true; do
+            local en=$(uci -q get "znetcontrol.@device[$all_index].enable")
+            local tg=$(uci -q get "znetcontrol.@device[$all_index].target")
+            [ -z "$en" ] && [ -z "$tg" ] && break
+            
+            if [ "$en" != "1" ] && [ -n "$tg" ]; then
+                # 禁用规则，强制从 nftables 删除残留
+                timedel "$all_index"
+                info "清理禁用规则残留: ID=$all_index"
+            fi
+            all_index=$((all_index + 1))
+        done
+        # ===== 结束 =====
+        
         if [ -n "$enabled_ids" ]; then
             for id in $enabled_ids; do
                 display_name=$(get_rule_display_name "$id")
@@ -948,5 +975,3 @@ case "$crrun" in
         exit 1
         ;;
 esac
-
-
