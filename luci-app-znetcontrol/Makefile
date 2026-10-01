@@ -33,7 +33,10 @@ define Package/$(PKG_NAME)/description
 $(LUCI_DESCRIPTION)
 endef
 
-define Build/Compile
+define Build/Prepare
+  $(MV) $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua.tmp
+  $(SED) "s|{{PKG_VERSION}}|$(PKG_VERSION)|g" $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua.tmp > $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua
+  $(RM) $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua.tmp
 endef
 
 define Package/$(PKG_NAME)/conffiles
