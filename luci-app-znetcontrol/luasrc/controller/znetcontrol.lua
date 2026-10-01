@@ -31,7 +31,7 @@ end
 -- 版本检测函数（不使用版本文件）
 function get_app_version()
     local nixio = require("nixio")
-    local version = "2.1.1"
+    local version = "2.1.3"
     
     -- 尝试从opkg包信息读取
     local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
