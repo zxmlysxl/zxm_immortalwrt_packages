@@ -49,13 +49,13 @@ endef
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-	$(INSTALL_DATA) ./luasrc/controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
+	$(INSTALL_DATA) ./controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
 	
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi/znetcontrol
-	$(INSTALL_DATA) ./luasrc/model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
+	$(INSTALL_DATA) ./model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
 	
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/znetcontrol
-	$(INSTALL_DATA) ./luasrc/view/znetcontrol/*.htm $(1)/usr/lib/lua/luci/view/znetcontrol/
+	$(INSTALL_DATA) ./view/znetcontrol/*.htm $(1)/usr/lib/lua/luci/view/znetcontrol/
 	
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-znetcontrol.json $(1)/usr/share/luci/menu.d/
