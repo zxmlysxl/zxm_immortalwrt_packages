@@ -34,6 +34,7 @@ $(LUCI_DESCRIPTION)
 endef
 
 define Build/Prepare
+	$(CP) $(PKG_BUILD_DIR)/* $(PKG_BUILD_DIR)/ 2>/dev/null || :
 	$(SED) 's|{{PKG_VERSION}}|$(PKG_VERSION)|g' $(PKG_BUILD_DIR)/luasrc/controller/znetcontrol.lua
 endef
 
