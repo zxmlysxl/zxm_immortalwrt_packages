@@ -6,7 +6,8 @@ m = Map("znetcontrol", translate("上网管控规则"),
     translate("为设备设置上网时间管控规则，支持按IP地址或MAC地址、时间段和日期进行精确控制") .. 
     "<br><span style='color: #ff6b6b;'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>" ..
     "<br><span style='color: #007bff;'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>" ..
-    "<br><span style='color: #28a745;'>支持格式：1.单个IP: 192.168.32.10 2. IP范围: 192.168.32.10-192.168.32.100 3. CIDR: 192.168.32.10/24 4. MAC地址: 00:11:22:33:44:55</span>")
+    "<br><span style='color: #28a745;'>目标格式：单IP / IP范围 / CIDR / MAC地址</span>" ..
+    "<br><span style='color: #6f42c1;'>星期格式：0=每天 | 1-5=工作日 | 6,7=周末 | 1-3=范围 | 1,3,5=自定义</span>")
 
 -- ========== 新增：全局设置段 ==========
 gs = m:section(TypedSection, "settings", translate("系统设置"), "")
