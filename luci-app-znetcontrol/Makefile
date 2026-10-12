@@ -33,6 +33,12 @@ define Package/$(PKG_NAME)/description
 $(LUCI_DESCRIPTION)
 endef
 
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)/luasrc
+	$(CP) ./luasrc/* $(PKG_BUILD_DIR)/luasrc/
+	$(CP) ./root/* $(PKG_BUILD_DIR)/
+endef
+
 define Package/$(PKG_NAME)/conffiles
 /etc/config/znetcontrol
 endef
