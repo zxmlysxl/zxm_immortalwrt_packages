@@ -9,8 +9,7 @@ m = Map("znetcontrol", translate("上网管控规则"),
     "<br><span style='color: #28a745;'>支持格式：1.单个IP: 192.168.32.10 2. IP范围: 192.168.32.10-192.168.32.100 3. CIDR: 192.168.32.10/24 4. MAC地址: 00:11:22:33:44:55</span>")
 
 -- ========== 新增：全局设置段 ==========
-gs = m:section(TypedSection, "settings", translate("系统设置"),
-    translate("全局设置，保存后自动生效"))
+gs = m:section(TypedSection, "settings", translate("系统设置"), "")
 gs.anonymous = true
 gs.addremove = false
 
