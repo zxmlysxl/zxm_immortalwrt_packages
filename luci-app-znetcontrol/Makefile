@@ -34,9 +34,18 @@ $(LUCI_DESCRIPTION)
 endef
 
 define Build/Prepare
+	# 复制 luasrc 到 build 目录
 	mkdir -p $(PKG_BUILD_DIR)/luasrc
 	$(CP) ./luasrc/* $(PKG_BUILD_DIR)/luasrc/
+	# 复制 root 到 build 目录
 	$(CP) ./root/* $(PKG_BUILD_DIR)/
+	# 将 luasrc 下的子目录展开到 package root（供 install 命令使用）
+	mkdir -p $(PKG_BUILD_DIR)/controller
+	$(CP) ./luasrc/controller/* $(PKG_BUILD_DIR)/controller/
+	mkdir -p $(PKG_BUILD_DIR)/model/cbi
+	$(CP) ./luasrc/model/cbi/* $(PKG_BUILD_DIR)/model/cbi/
+	mkdir -p $(PKG_BUILD_DIR)/view
+	$(CP) ./luasrc/view/* $(PKG_BUILD_DIR)/view/
 endef
 
 define Package/$(PKG_NAME)/conffiles
