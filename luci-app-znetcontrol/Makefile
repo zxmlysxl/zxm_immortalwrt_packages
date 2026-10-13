@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=2.1.3
-PKG_RELEASE:=20260929
+PKG_VERSION:=2.1.4
+PKG_RELEASE:=20261013
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
 LUCI_TITLE:=佐罗上网管控
@@ -33,24 +33,7 @@ define Package/$(PKG_NAME)/description
 $(LUCI_DESCRIPTION)
 endef
 
-define Build/Prepare
-	# 复制 luasrc 到 build 目录
-	mkdir -p $(PKG_BUILD_DIR)/luasrc
-	$(CP) ./luasrc/* $(PKG_BUILD_DIR)/luasrc/
-	# 复制 root 到 build 目录
-	$(CP) ./root/* $(PKG_BUILD_DIR)/
-	# 将 luasrc 下的子目录展开到 package root（供 install 命令使用）
-	mkdir -p $(PKG_BUILD_DIR)/controller
-	$(CP) ./luasrc/controller/* $(PKG_BUILD_DIR)/controller/
-	mkdir -p $(PKG_BUILD_DIR)/model/cbi
-	$(CP) ./luasrc/model/cbi/* $(PKG_BUILD_DIR)/model/cbi/
-	mkdir -p $(PKG_BUILD_DIR)/view
-	$(CP) ./luasrc/view/* $(PKG_BUILD_DIR)/view/
-endef
-
 define Build/Compile
-	# LuCI app, nothing to compile (PKGARCH=all)
-	touch $(PKG_BUILD_DIR)
 endef
 
 define Package/$(PKG_NAME)/conffiles
@@ -65,33 +48,33 @@ endef
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-	$(INSTALL_DATA) ./controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
-	
+	$(INSTALL_DATA) ./luasrc/controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
+
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi/znetcontrol
-	$(INSTALL_DATA) ./model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
-	
+	$(INSTALL_DATA) ./luasrc/model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
+
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/znetcontrol
-	$(INSTALL_DATA) ./view/znetcontrol/*.htm $(1)/usr/lib/lua/luci/view/znetcontrol/
-	
+	$(INSTALL_DATA) ./luasrc/view/znetcontrol/*.htm $(1)/usr/lib/lua/luci/view/znetcontrol/
+
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-znetcontrol.json $(1)/usr/share/luci/menu.d/
-	
+
 	$(INSTALL_DIR) $(1)/usr/share/luci/applications.d
 	$(INSTALL_DATA) ./root/usr/share/luci/applications.d/luci-app-znetcontrol.json $(1)/usr/share/luci/applications.d/
-	
+
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-znetcontrol.json $(1)/usr/share/rpcd/acl.d/
-	
+
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./root/usr/bin/znetcontrol $(1)/usr/bin/znetcontrol
 	$(INSTALL_BIN) ./root/usr/bin/znetcontrolctrl $(1)/usr/bin/znetcontrolctrl
-	
+
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/znetcontrol $(1)/etc/config/znetcontrol
-	
+
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./root/etc/init.d/znetcontrol $(1)/etc/init.d/znetcontrol
-	
+
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./root/etc/uci-defaults/luci-znetcontrol $(1)/etc/uci-defaults/luci-znetcontrol
 endef
