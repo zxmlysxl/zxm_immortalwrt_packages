@@ -48,6 +48,11 @@ define Build/Prepare
 	$(CP) ./luasrc/view/* $(PKG_BUILD_DIR)/view/
 endef
 
+define Build/Compile
+	# LuCI app, nothing to compile (PKGARCH=all)
+	touch $(PKG_BUILD_DIR)
+endef
+
 define Package/$(PKG_NAME)/conffiles
 /etc/config/znetcontrol
 endef
