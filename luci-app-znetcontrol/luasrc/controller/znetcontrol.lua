@@ -30,10 +30,19 @@ end
 
 -- 版本检测函数（不使用版本文件）
 function get_app_version()
+    -- 方法1: opkg list-installed（最可靠，用包管理器接口）
+    local f = io.popen("opkg list-installed luci-app-znetcontrol 2>/dev/null")
+    if f then
+        local output = f:read("*a")
+        f:close()
+        local version = output:match("luci%-app%-znetcontrol%s+-%s+([%d%.%-]+)")
+        if version and version ~= "" then
+            return version
+        end
+    end
+
+    -- 方法2: 读control文件（fallback）
     local nixio = require("nixio")
-    local version = ""
-    
-    -- 尝试从opkg包信息读取
     local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
     if nixio.fs.access(control_file) then
         local fd = io.open(control_file, "r")
@@ -41,15 +50,14 @@ function get_app_version()
             for line in fd:lines() do
                 local ctrl_match = line:match("^Version:%s*(.+)")
                 if ctrl_match then
-                    version = ctrl_match
-                    break
+                    return ctrl_match
                 end
             end
             fd:close()
         end
     end
-       
-    return version
+
+    return "unknown"
 end
 
 function index()
