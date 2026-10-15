@@ -9,12 +9,6 @@ m = Map("znetcontrol", translate("上网管控规则"),
     "<br><span style='color: #28a745;'>目标格式：单IP / IP范围 / CIDR / MAC地址</span>" ..
     "<br><span style='color: #6f42c1;'>星期格式：0=每天 | 1-5=工作日 | 6,7=周末 | 1-3=范围 | 1,3,5=自定义</span>")
 
--- ========== 新增：全局设置段 ==========
-gs = m:section(TypedSection, "global", translate("系统设置"))
-gs.anonymous = true
-gs.addremove = false
-
--- ========== 结束：全局设置段 ==========
 local function manage_service_by_rules()
     -- 统计启用规则数量
     local enabled_count = 0
