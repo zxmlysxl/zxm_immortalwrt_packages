@@ -30,18 +30,29 @@ end
 
 -- 版本检测函数（不使用版本文件）
 function get_app_version()
-    -- 方法1: opkg list-installed（最可靠，用包管理器接口）
-    local f = io.popen("opkg list-installed luci-app-znetcontrol 2>/dev/null")
+    -- 方法1: apk info（ImmortalWrt APK 固件）
+    local f = io.popen("apk info luci-app-znetcontrol 2>/dev/null")
     if f then
         local output = f:read("*a")
         f:close()
+        local version = output:match("luci%-app%-znetcontrol%-(%d+%.%d+%.%d+%-[rf]%d+)")
+        if version and version ~= "" then
+            return version
+        end
+    end
+
+    -- 方法2: opkg list-installed（标准 OpenWrt opkg 固件）
+    local f2 = io.popen("opkg list-installed luci-app-znetcontrol 2>/dev/null")
+    if f2 then
+        local output = f2:read("*a")
+        f2:close()
         local version = output:match("luci%-app%-znetcontrol%s+-%s+([%d%.%-]+)")
         if version and version ~= "" then
             return version
         end
     end
 
-    -- 方法2: 读control文件（fallback）
+    -- 方法3: 读control文件（fallback）
     local nixio = require("nixio")
     local control_file = "/usr/lib/opkg/info/luci-app-znetcontrol.control"
     if nixio.fs.access(control_file) then
