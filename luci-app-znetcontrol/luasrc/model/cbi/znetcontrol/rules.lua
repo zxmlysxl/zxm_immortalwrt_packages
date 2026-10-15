@@ -14,15 +14,6 @@ gs = m:section(TypedSection, "global", translate("系统设置"))
 gs.anonymous = true
 gs.addremove = false
 
--- 管控时自动关闭硬件卸载
-hw_off = gs:option(Flag, "hw_offload_control", translate("硬件卸载控制"),
-    translate("开启后，znetcontrol 启动时会自动关闭硬件流量卸载（flow_offloading_hw），" ..
-    "停止时自动恢复。用于解决硬件卸载导致 nftables 管控规则失效的问题。"))
-hw_off.default = false
-hw_off.rmempty = false
-hw_off.description = translate("注意：硬件加速关闭后，路由器 NAT 转发走 CPU 软路由，") ..
-    "<br>" .. translate("可能影响极限下载速度，日常使用无明显感知。")
-
 -- ========== 结束：全局设置段 ==========
 local function manage_service_by_rules()
     -- 统计启用规则数量
