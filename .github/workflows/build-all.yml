@@ -1,0 +1,133 @@
+name: Build All Packages
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0'   # 每周日 UTC 02:00 = 北京时间周一 10:00
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 所有 luci app + 独立工具包
+        package:
+          - luci-app-adguardhome
+          - luci-app-advancedplus
+          - luci-app-chatgpt-web
+          - luci-app-eqosplus
+          - luci-app-kucat-config
+          - luci-app-momo
+          - luci-app-netdata
+          - luci-app-netwizard
+          - luci-app-openclash
+          - luci-app-ota
+          - luci-app-passwall
+          - luci-app-passwall2
+          - luci-app-poweroffdevice
+          - luci-app-tailscale
+          - luci-app-taskplan
+          - luci-app-timecontrol
+          - luci-app-wechatpush
+          - luci-app-wolplus
+          - luci-app-wrtbwmon
+          - luci-app-znetcontrol
+          - lucky
+          - momo
+          - nikki
+          - netspeedtest
+          - watchdog
+          - wrtbwmon
+          - bandix
+          - easytier
+        sdk: [openwrt-24.10, openwrt-25.12]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check package exists
+        id: check
+        run: |
+          if [ -d "${{ matrix.package }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Package directory ${{ matrix.package }} not found, skipping"
+          fi
+
+      - uses: sbwml/openwrt-gh-action-sdk@main
+        if: steps.check.outputs.exists == 'true'
+        env:
+          ARCH: x86_64-${{ matrix.sdk }}
+          FEEDNAME: zuoxm
+          PACKAGES: ${{ matrix.package }}
+
+      - name: Upload ipk artifacts
+        if: steps.check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipk-${{ matrix.sdk }}-${{ matrix.package }}
+          path: bin/packages/x86_64/zuoxm/*${{ matrix.package }}*.ipk
+          retention-days: 3
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ipks
+          pattern: ipk-*
+          merge-multiple: true
+
+      - name: List all compiled packages
+        run: |
+          echo "=== 编译产物列表 ==="
+          if ls ipks/*.ipk 2>/dev/null; then
+            echo ""
+            echo "总计: $(ls ipks/*.ipk 2>/dev/null | wc -l) 个文件"
+          else
+            echo "无编译产物"
+          fi
+
+      - name: Generate release tag
+        id: ver
+        run: |
+          DATE=$(date +%Y%m%d)
+          TIME=$(date +%H%M)
+          echo "tag=all-${DATE}-${TIME}" >> $GITHUB_OUTPUT
+          echo "date=${DATE}" >> $GITHUB_OUTPUT
+
+      - name: Create or update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: 插件包汇总 ${{ steps.ver.outputs.tag }}
+          body: |
+            佐罗 ImmortalWrt 插件包汇总
+
+            **编译日期**: ${{ steps.ver.outputs.date }}
+            **架构**: x86_64
+            **编译SDK**: openwrt-24.10 / openwrt-25.12
+
+            包含所有仓库内的插件包，安装方法：
+            ```bash
+            opkg install <包名>.ipk
+            ```
+
+            所有包列表：
+            ```
+            $(ls ipks/*.ipk 2>/dev/null | xargs -n1 basename | sort)
+            ```
+          files: ipks/*.ipk
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
