@@ -1,0 +1,81 @@
+name: Build luci-app-znetcontrol
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'luci-app-znetcontrol/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sdk: [openwrt-24.10, openwrt-25.12]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: sbwml/openwrt-gh-action-sdk@main
+        id: sdk
+        env:
+          ARCH: x86_64-${{ matrix.sdk }}
+          FEEDNAME: zuoxm
+          PACKAGES: luci-app-znetcontrol
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ipk-${{ matrix.sdk }}
+          path: bin/packages/x86_64/zuoxm/*
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: ver
+        run: |
+          VER=$(awk -F':=' '/^PKG_VERSION:=/ {print $2}' luci-app-znetcontrol/Makefile)
+          REL=$(awk -F':=' '/^PKG_RELEASE:=/ {print $2}' luci-app-znetcontrol/Makefile)
+          echo "tag=v${VER}-r${REL}" >> $GITHUB_OUTPUT
+          echo "version=${VER}-r${REL}" >> $GITHUB_OUTPUT
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ipks
+          merge-multiple: true
+
+      - name: Upload ipk artifacts
+        run: |
+          echo "=== 编译产物 ==="
+          ls -la ipks/ 2>/dev/null || echo "无编译产物"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: steps.ver.outputs.tag != 'v'
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: luci-app-znetcontrol ${{ steps.ver.outputs.version }}
+          body: |
+            佐罗上网管控 znetcontrol 独立编译包
+
+            **版本**: ${{ steps.ver.outputs.version }}
+            **架构**: x86_64
+            **编译SDK**: openwrt-24.10 / openwrt-25.12
+
+            **安装方法**（在 OpenWrt/ImmortalWrt 路由器上）：
+            ```bash
+            # 上传 ipk 文件到路由器后执行
+            opkg install luci-app-znetcontrol*.ipk
+            ```
+
+            **更新日志**：https://github.com/zxmlysxl/zxm_immortalwrt_packages/commits/main
+          files: ipks/*
+          make_latest: true
