@@ -53,40 +53,22 @@ function escapeForJs(str) {
         .replace(/>/g, '&gt;');
 }
 
-// 主题检测
+// 主题检测 — 优先使用系统 prefers-color-scheme，最可靠
 function detectThemeMode() {
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        return 'light';
+    }
+    // fallback: 检测 body class
     const body = document.body;
     if (body.classList.contains('dark') || body.classList.contains('night')) return 'dark';
     if (body.classList.contains('light')) return 'light';
-    
     const dataTheme = body.getAttribute('data-theme');
     if (dataTheme === 'dark') return 'dark';
     if (dataTheme === 'light') return 'light';
-    
-    const computedStyle = window.getComputedStyle(body);
-    const bgColor = computedStyle.backgroundColor;
-    
-    const getLuminance = (rgb) => {
-        const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-        if (!match) return 0.5;
-        
-        const r = parseInt(match[1]) / 255;
-        const g = parseInt(match[2]) / 255;
-        const b = parseInt(match[3]) / 255;
-        
-        const rLinear = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
-        const gLinear = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
-        const bLinear = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
-        
-        return 0.2126 * rLinear + 0.7152 * gLinear + 0.0722 * bLinear;
-    };
-    
-    const bgLuminance = getLuminance(bgColor);
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    
-    if (bgLuminance < 0.3) return 'dark';
-    if (bgLuminance > 0.7) return 'light';
-    return prefersDark ? 'dark' : 'light';
+    return 'light'; // 默认浅色
 }
 
 // 主题样式应用
