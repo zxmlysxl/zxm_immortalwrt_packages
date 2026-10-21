@@ -1,0 +1,13 @@
+{
+	"admin/status/overview": {
+		"title": "概览",
+		"order": 1,
+		"action": {
+			"type": "view",
+			"path": "future/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-futureoverview" ]
+		}
+	}
+}

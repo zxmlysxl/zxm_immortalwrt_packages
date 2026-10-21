@@ -1,0 +1,12 @@
+{
+	"luci-app-futureoverview": {
+		"description": "Grant read-only access to system overview",
+		"mainmenu": false,
+		"read": {
+			"cnst": { "*": null },
+			"file": { "get-info": null },
+			"luci": { "getCPUUsage": null, "getTempInfo": null, "getMounts": null },
+			"system": { "board": null, "info": null }
+		}
+	}
+}
