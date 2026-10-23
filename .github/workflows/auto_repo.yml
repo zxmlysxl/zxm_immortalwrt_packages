@@ -245,6 +245,19 @@ jobs:
           echo "   成功同步: $(find . -maxdepth 2 -type f -name "*.lua" -o -name "*.js" -o -name "*.md" 2>/dev/null | grep -v ".git" | wc -l) 个文件"
 
       # 步骤5：提交变更
+      # 同步后修复失效的包版本
+      # 上游偶尔会把版本锁到"tag 存在但 release 资产为空"的版本,
+      # 固件编译下载时必然 404, 整轮固件报废(单次 3~4 小时)。
+      # 这里在 rsync 之后自动改到可用版本并重算 PKG_HASH。
+      - name: Repair broken package versions
+        run: |
+          echo "=== 修复失效的包版本 ==="
+          if [ -f scripts/repair_package_versions.py ]; then
+            python3 scripts/repair_package_versions.py . || echo "::warning::版本修复脚本执行异常, 继续"
+          else
+            echo "::warning::未找到 scripts/repair_package_versions.py, 跳过"
+          fi
+
       - name: Commit and Push Changes
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1
