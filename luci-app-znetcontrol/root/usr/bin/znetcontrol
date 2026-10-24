@@ -420,6 +420,87 @@ detect_gateway_mode() {
     fi
 }
 
+# 判断字符串是否为 MAC 地址
+is_mac_addr() {
+    echo "$1" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
+}
+
+# 读取 nft 集合中的元素
+set_elements() {
+    nft list set inet znetcontrol "$1" 2>/dev/null |         sed -n 's/^[[:space:]]*elements = { \(.*\) }$/\1/p' | tr ',' ' '
+}
+
+# 解析 MAC 对应的终端 IP（IPv4 + IPv6）
+# 来源优先级：DHCP 租约 > ARP 表（仅有效条目）> IPv6 邻居表
+get_device_ips() {
+    local mac="$1"
+    local lower=$(echo "$mac" | tr '[:upper:]' '[:lower:]')
+    local dash=$(echo "$lower" | tr ':' '-')
+    local out=""
+    
+    out="$out $(cat /tmp/dhcp.leases 2>/dev/null | awk -v m="$dash" 'tolower($2)==m {print $3}')"
+    out="$out $(cat /proc/net/arp 2>/dev/null | awk -v m="$lower" 'tolower($4)==m && $3=="0x2" {print $1}')"
+    out="$out $(ip -6 neigh show 2>/dev/null | awk -v m="$lower" '{for(i=1;i<=NF;i++) if(tolower($i)==m){print $1; break}}')"
+    
+    echo "$out" | tr ' ' '
+' |         grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F]*:[0-9a-fA-F:]+$' |         sort -u | tr '
+' ' '
+}
+
+# 同步"由 MAC 规则派生出的终端 IP"到 nft 集合（源 IP 双保险）
+# 目的：终端即使更换/伪装源 MAC，只要 IP 没变仍会被拦截
+sync_mac_ip_sets() {
+    [ -n "$bin_nft" ] || return
+    
+    local desired=""
+    local idx=0
+    while true; do
+        local en=$(uci -q get "znetcontrol.@device[$idx].enable")
+        local tg=$(uci -q get "znetcontrol.@device[$idx].target")
+        [ -z "$en" ] && [ -z "$tg" ] && break
+        if [ "$en" = "1" ] && is_mac_addr "$tg" && check_list "$idx"; then
+            local mac=$(echo "$tg" | tr '[:upper:]' '[:lower:]')
+            desired="$desired $(get_device_ips "$mac")"
+        fi
+        idx=$((idx + 1))
+    done
+    
+    local cur_v4=$(set_elements ip_mac)
+    local cur_v6=$(set_elements ip6_mac)
+    
+    for ip in $cur_v4; do
+        case " $desired " in
+            *" $ip "*) ;;
+            *) nft delete element inet znetcontrol ip_mac "{ $ip }" 2>/dev/null ;;
+        esac
+    done
+    for ip in $cur_v6; do
+        case " $desired " in
+            *" $ip "*) ;;
+            *) nft delete element inet znetcontrol ip6_mac "{ $ip }" 2>/dev/null ;;
+        esac
+    done
+    
+    for ip in $desired; do
+        case "$ip" in
+            *:*)
+                case " $cur_v6 " in
+                    *" $ip "*) ;;
+                    *) nft add element inet znetcontrol ip6_mac "{ $ip }" 2>/dev/null ;;
+                esac
+                ;;
+            *)
+                case " $cur_v4 " in
+                    *" $ip "*) ;;
+                    *) nft add element inet znetcontrol ip_mac "{ $ip }" 2>/dev/null ;;
+                esac
+                ;;
+        esac
+    done
+    
+    dbg "同步派生IP完成: $desired"
+}
+
 init_main_route() {
     info "初始化主路由模式"
     
@@ -444,14 +525,26 @@ init_main_route() {
         #                   保证终端能续租、保持在统计页面可见）
         # ==========================================================
         nft add table inet znetcontrol
+        # MAC 集合
         nft add set inet znetcontrol mac_forward "{ type ether_addr; flags interval; }" 2>/dev/null || true
         nft add set inet znetcontrol mac_input "{ type ether_addr; flags interval; }" 2>/dev/null || true
+        # IP 集合：ip_forward/ip_input 来自"按 IP 管控"的规则
         nft add set inet znetcontrol ip_forward "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
         nft add set inet znetcontrol ip_input "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+        nft add set inet znetcontrol ip6_forward "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+        nft add set inet znetcontrol ip6_input "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+        # IP 双保险集合：由 MAC 规则实时解析出的终端 IP 单独存放，
+        # 便于精确回收，不会误删"按 IP 管控"规则写入的地址
+        nft add set inet znetcontrol ip_mac "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+        nft add set inet znetcontrol ip6_mac "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
         
         nft add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
+        # ether saddr 匹配同时覆盖 IPv4 / IPv6
         nft add rule inet znetcontrol forward ether saddr @mac_forward drop comment "block-mac-forward"
         nft add rule inet znetcontrol forward ip saddr @ip_forward drop comment "block-ipv4-forward"
+        nft add rule inet znetcontrol forward ip saddr @ip_mac drop comment "block-ipv4-mac-derived"
+        nft add rule inet znetcontrol forward ip6 saddr @ip6_forward drop comment "block-ipv6-forward"
+        nft add rule inet znetcontrol forward ip6 saddr @ip6_mac drop comment "block-ipv6-mac-derived"
         
         nft add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }"
         # 强力控制默认放行 DHCP：让终端能续租、保持在概览/统计页面里可见
@@ -462,6 +555,34 @@ init_main_route() {
         fi
         nft add rule inet znetcontrol input ether saddr @mac_input drop comment "block-mac-input"
         nft add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
+        nft add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
+        
+        # ==========================================================
+        # 可选：网关钉扎（pin_gateway=1）
+        #
+        # 被控终端若把"网关"改成同网段其它设备（如 AP 的管理 IP），
+        # 其下一跳就从路由器变成了别的二层邻居。钉扎后，被控终端
+        # 只能把帧发给路由器自己的 MAC（或广播/组播），不允许
+        # 把下一跳换成别的设备，从而堵住"改网关绕过管控"的路子。
+        #
+        # 注意：bridge 家族的 forward 钩子只在流量"经由 immortalwrt
+        # 的网桥转发"时才可见；同网段内直连的帧（如 终端→AP）在
+        # immortalwrt 上看不到，此时需要从 AP 侧关闭其路由/NAT 功能。
+        # ==========================================================
+        nft delete table bridge znetcontrol_pin 2>/dev/null || true
+        if [ "$(config_s_get pin_gateway '0')" = "1" ]; then
+            local lan_mac=$(ip -o link show br-lan 2>/dev/null | awk -F'link/ether ' '{print $2}' | cut -d' ' -f1)
+            if [ -n "$lan_mac" ]; then
+                nft add table bridge znetcontrol_pin
+                nft add set bridge znetcontrol_pin mac_ctl "{ type ether_addr; flags interval; }"
+                nft add set bridge znetcontrol_pin dst_ok "{ type ether_addr; flags interval; elements = { $lan_mac, ff:ff:ff:ff:ff:ff, 01:00:5e:00:00:00/16, 33:33:00:00:00:00/16 } }"
+                nft add chain bridge znetcontrol_pin forward "{ type filter hook forward priority -300; policy accept; }"
+                nft add rule bridge znetcontrol_pin forward ether saddr @mac_ctl ether daddr != @dst_ok drop comment "pin-gateway"
+                info "网关钉扎已启用（只允许发往 $lan_mac）"
+            else
+                info "未取到 br-lan MAC，跳过网关钉扎"
+            fi
+        fi
     fi
 }
 
@@ -507,6 +628,8 @@ main_route_timeadd() {
     
     # 两种模式都必须先断外网（forward 钩子才是真正的出网路径）
     nft add element inet znetcontrol mac_forward "{ $value }" 2>/dev/null
+    # 网关钉扎集合（pin_gateway=1 时生效）
+    nft add element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null
     
     if [ "$chain" = "input" ]; then
         # 强力控制：额外禁止访问路由器本身
@@ -621,6 +744,9 @@ timeadd() {
     
     # 立即断开已有连接，确保管控规则马上生效
     flush_connections "$target"
+    
+    # 同步源 IP 双保险集合
+    sync_mac_ip_sets
 }
 
 timedel() {
@@ -654,6 +780,7 @@ timedel() {
                     # forward / input 两个集合都要清理
                     nft delete element inet znetcontrol mac_forward "{ $value }" 2>/dev/null || true
                     nft delete element inet znetcontrol mac_input "{ $value }" 2>/dev/null || true
+                    nft delete element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null || true
                     info "✅ 【$display_name】从防火墙移除: MAC $value"
                 else
                     # 删除MAC地址规则
@@ -684,6 +811,9 @@ timedel() {
                 ;;
         esac
     fi
+    
+    # 同步源 IP 双保险集合
+    sync_mac_ip_sets
 }
 
 show_status() {
@@ -805,6 +935,7 @@ stop_timecontrol() {
     # 清理防火墙规则（添加超时）
     if [ -n "$bin_nft" ]; then
         local timeout=5
+        timeout nft delete table bridge znetcontrol_pin 2>/dev/null || true
         if [ "$GATEWAY_MODE" = "main" ]; then
             timeout nft delete table ip znetcontrol 2>/dev/null && info "已清理IPv4表"
             timeout nft delete table ip6 znetcontrol 2>/dev/null && info "已清理IPv6表"
@@ -979,6 +1110,14 @@ case "$crrun" in
         done
         ;;
         
+    "sync")
+        # 同步派生IP集合（由 znetcontrolctrl 定时调用）
+        if [ -z "$GATEWAY_MODE" ]; then
+            detect_gateway_mode
+        fi
+        sync_mac_ip_sets
+        ;;
+    
     "status")
         show_status
         ;;
