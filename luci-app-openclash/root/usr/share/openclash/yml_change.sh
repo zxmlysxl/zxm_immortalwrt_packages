@@ -476,7 +476,7 @@ begin
          Value['secret'] = secret
          Value['bind-address'] = '*'
          Value['global-ua'] = global_ua if global_ua != '0'
-         Value['external-ui'] = '/usr/share/openclash/ui'
+         Value['external-ui'] = '/etc/openclash/ui'
          Value['external-ui-name'] = default_dashboard
          case default_dashboard
          when 'dashboard'
