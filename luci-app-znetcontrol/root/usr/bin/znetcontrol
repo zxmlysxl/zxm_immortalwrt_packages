@@ -283,11 +283,16 @@ get_device_ip() {
     fi
     
     if [ -z "$ip" ]; then
-        local mac_dash=$(echo "$mac" | tr ':' '-')
-        ip=$(cat /tmp/dhcp.leases 2>/dev/null | awk -v search_mac="$mac_dash" '
-            BEGIN {IGNORECASE=1}
-            $2 == search_mac {print $3; exit}
+        # dnsmasq 租约文件里 MAC 是冒号分隔；这里同时兼容短横线写法
+        ip=$(cat /tmp/dhcp.leases 2>/dev/null | awk -v search_mac="$mac" '
+            tolower($2) == search_mac {print $3; exit}
         ')
+        if [ -z "$ip" ]; then
+            local mac_dash=$(echo "$mac" | tr ':' '-')
+            ip=$(cat /tmp/dhcp.leases 2>/dev/null | awk -v search_mac="$mac_dash" '
+                tolower($2) == search_mac {print $3; exit}
+            ')
+        fi
     fi
     
     if [ -z "$ip" ]; then
@@ -438,6 +443,7 @@ get_device_ips() {
     local dash=$(echo "$lower" | tr ':' '-')
     local out=""
     
+    out="$out $(cat /tmp/dhcp.leases 2>/dev/null | awk -v m="$lower" 'tolower($2)==m {print $3}')"
     out="$out $(cat /tmp/dhcp.leases 2>/dev/null | awk -v m="$dash" 'tolower($2)==m {print $3}')"
     out="$out $(cat /proc/net/arp 2>/dev/null | awk -v m="$lower" 'tolower($4)==m && $3=="0x2" {print $1}')"
     out="$out $(ip -6 neigh show 2>/dev/null | awk -v m="$lower" '{for(i=1;i<=NF;i++) if(tolower($i)==m){print $1; break}}')"
