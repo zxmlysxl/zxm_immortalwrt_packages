@@ -6,6 +6,12 @@ config global 'settings'
     # 开启后，znetcontrol启动时会关闭 flow_offloading_hw，
     # 停止时自动恢复。用于解决硬件卸载导致 nftables 规则失效的问题。
     option hw_offload_control '0'
+    # 管控期间关闭软件+硬件流量卸载（0=禁用, 1=开启，默认开启）
+    # 已卸载的连接会绕过 forward 钩子，导致被控终端仍能上网。
+    option offload_control '1'
+    # 强力控制时是否放行 DHCP（0=禁用, 1=开启，默认开启）
+    # 放行后被控终端仍能续租，得以在概览/统计页面保持可见。
+    option strong_allow_dhcp '1'
     
 # 规则示例
 # config device 'rule1'
