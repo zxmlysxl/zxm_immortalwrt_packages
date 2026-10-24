@@ -193,5 +193,8 @@ log() {
 
 while :; do
     process_devices
+    # 同步"由 MAC 规则派生出的终端 IP"集合
+    # 终端 IP 可能变化（续租/静态改配），需周期性刷新双保险规则
+    znetcontrol sync >/dev/null 2>&1
     sleep 30
 done
