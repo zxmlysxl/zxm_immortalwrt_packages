@@ -4,10 +4,10 @@ local http = require("luci.http")
 
 m = Map("znetcontrol", translate("上网管控规则"), 
     translate("为设备设置上网时间管控规则，支持按IP地址或MAC地址、时间段和日期进行精确控制") .. 
-    "<br><span style='color: #ff6b6b;'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>" ..
-    "<br><span style='color: #007bff;'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>" ..
-    "<br><span style='color: #28a745;'>目标格式：单IP / IP范围 / CIDR / MAC地址</span>" ..
-    "<br><span style='color: #6f42c1;'>星期格式：0=每天 | 1-5=工作日 | 6,7=周末 | 1-3=范围 | 1,3,5=自定义</span>")
+    "<br><span style='color: var(--znc-danger-text);'>注意：新规则需要填写有效的IP地址或MAC地址后才能生效</span>" ..
+    "<br><span style='color: var(--znc-primary-text);'>控制强度说明：普通控制（仅限制上网），强力控制（限制上网和访问路由器）</span>" ..
+    "<br><span style='color: var(--znc-success-text);'>目标格式：单IP / IP范围 / CIDR / MAC地址</span>" ..
+    "<br><span style='color: var(--znc-warn-text);'>星期格式：0=每天 | 1-5=工作日 | 6,7=周末 | 1-3=范围 | 1,3,5=自定义</span>" .. "<style>:root{--znc-danger-text:#dc3545;--znc-primary-text:#007bff;--znc-success-text:#28a745;--znc-warn-text:#6f42c1;}html[data-zncolor=dark]{--znc-danger-text:#ff8a95;--znc-primary-text:#4dabf7;--znc-success-text:#4fd67a;--znc-warn-text:#ffd75e;}</style>")
 
 local function manage_service_by_rules()
     -- 统计启用规则数量

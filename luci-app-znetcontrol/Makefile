@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
 PKG_VERSION:=2.2.1
-PKG_RELEASE:=20261024
+PKG_RELEASE:=20261024-1
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
 LUCI_TITLE:=佐罗上网管控
@@ -50,6 +50,8 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DATA) ./luasrc/controller/znetcontrol.lua $(1)/usr/lib/lua/luci/controller/
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi/znetcontrol
+	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/znetcontrol
+	$(INSTALL_DATA) ./luasrc/model/znetcontrol/theme.lua $(1)/usr/lib/lua/luci/model/znetcontrol/
 	$(INSTALL_DATA) ./luasrc/model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/znetcontrol

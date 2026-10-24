@@ -1,10 +1,28 @@
 <%+header%>
+<%- local znc = require("luci.model.znetcontrol.theme") -%>
+<%-
+local znc_default = znc.css_default()
+local znc_apply = znc.js_bundle()
+--%>
+<style id="znetcontrol-theme-default">
+<%= znc_default %>
+</style>
+<script>
+<%= znc_apply %>
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', znetcontrolApplyTheme);
+} else {
+  znetcontrolApplyTheme();
+}
+</script>
+
+
 <div class="cbi-map">
     <h2 name="content"><%:佐罗上网管控%></h2>
     <div class="cbi-map-descr">
         <%:基于MAC地址的网络访问时间管控系统%>
-        <br><small style="color: #666;">
-            <i class="icon icon-settings" style="color: #28a745;"></i> 
+        <br><small style="color: var(--znc-secondary-text);">
+            <i class="icon icon-settings" style="color: var(--znc-success-text);"></i> 
             <%:智能特性：自动识别主/旁路由模式，无需手动配置%>
         </small>
     </div>
@@ -157,15 +175,15 @@ function updateStatusDisplay(data) {
         if (data.gateway_mode === 'main') {
             gwEl.textContent = '主路由模式';
             gwEl.className = 'label';
-            gwEl.style.backgroundColor = '#d4edda';
-            gwEl.style.color = '#155724';
-            gwEl.style.border = '1px solid #c3e6cb';
+            gwEl.style.backgroundColor = 'var(--znc-success-bg)';
+            gwEl.style.color = 'var(--znc-success-text)';
+            gwEl.style.border = '1px solid var(--znc-success-border)';
         } else if (data.gateway_mode === 'bypass') {
             gwEl.textContent = '旁路由模式';
             gwEl.className = 'label';
-            gwEl.style.backgroundColor = '#fff3cd';
-            gwEl.style.color = '#856404';
-            gwEl.style.border = '1px solid #ffeeba';
+            gwEl.style.backgroundColor = 'var(--znc-warn-bg)';
+            gwEl.style.color = 'var(--znc-warn-text)';
+            gwEl.style.border = '1px solid var(--znc-warn-border)';
         } else {
             gwEl.textContent = '未检测';
             gwEl.className = 'label';
@@ -296,15 +314,15 @@ document.addEventListener('DOMContentLoaded', function() {
 }
 
 .label.success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+    background-color: var(--znc-success-bg);
+    color: var(--znc-success-text);
+    border: 1px solid var(--znc-success-border);
 }
 
 .label.error {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
+    background-color: var(--znc-danger-bg);
+    color: var(--znc-danger-text);
+    border: 1px solid var(--znc-danger-border);
 }
 </style>
 <%+footer%>

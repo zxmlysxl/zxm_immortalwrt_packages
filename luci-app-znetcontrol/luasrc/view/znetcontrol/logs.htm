@@ -1,4 +1,22 @@
 <%+header%>
+<%- local znc = require("luci.model.znetcontrol.theme") -%>
+<%-
+local znc_default = znc.css_default()
+local znc_apply = znc.js_bundle()
+--%>
+<style id="znetcontrol-theme-default">
+<%= znc_default %>
+</style>
+<script>
+<%= znc_apply %>
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', znetcontrolApplyTheme);
+} else {
+  znetcontrolApplyTheme();
+}
+</script>
+
+
 <div class="cbi-map">
     <h2 name="content"><%:系统日志%></h2>
     
@@ -97,12 +115,12 @@
                 
                 <!-- 日志显示区域 -->
                 <div style="width: 100%; position: relative;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 5px 0; border-bottom: 1px solid #eee;">
-                        <div style="font-size: 12px; color: #666;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 5px 0; border-bottom: 1px solid var(--znc-border);">
+                        <div style="font-size: 12px; color: var(--znc-secondary-text);">
                             <i class="icon icon-file-text"></i> 日志文件: 
                             <code>/var/log/znetcontrol.log</code>
                         </div>
-                        <div style="font-size: 12px; color: #666;">
+                        <div style="font-size: 12px; color: var(--znc-secondary-text);">
                             共 <span id="line-count">0</span> 行 | 
                             刷新间隔: <span id="refresh-display">30</span>秒 |
                             备份模式: <span id="backup-display">不备份</span> |
@@ -114,10 +132,10 @@
                         width: 100%;
                         height: 500px;
                         overflow: auto;
-                        background: #1a1a1a;
-                        color: #e0e0e0;
+                        background: var(--znc-log-bg);
+                        color: var(--znc-primary-text);
                         padding: 15px;
-                        border: 2px solid #333;
+                        border: 2px solid var(--znc-log-border);
                         border-radius: 8px;
                         font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
                         font-size: 12px;
@@ -168,8 +186,8 @@
         <div class="cbi-value">
             <div class="cbi-value-field">
                 <pre id="status-content" style="
-                    background: #2d2d2d;
-                    color: #e0e0e0;
+                    background: var(--znc-log-bg);
+                    color: var(--znc-primary-text);
                     padding: 15px;
                     border-radius: 5px;
                     font-family: monospace;
@@ -426,7 +444,7 @@ function refreshLogs() {
     const lineCountElement = document.getElementById('line-count');
     
     // 显示加载状态
-    logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">正在加载日志...</div>';
+    logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text);">正在加载日志...</div>';
     
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_logs")%>')
         .then(response => {
@@ -445,7 +463,7 @@ function refreshLogs() {
             
             if (logs.length === 0) {
                 // 修复：空日志时显示友好提示，而非错误
-                logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">暂无日志记录</div>';
+                logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text);">暂无日志记录</div>';
                 lineCountElement.textContent = '0';
             } else {
                 // 限制显示行数
@@ -476,7 +494,7 @@ function refreshLogs() {
         })
         .catch(error => {
             console.error('加载日志失败:', error);
-            logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #f44747;">' +
+            logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-danger-text);">' +
                                   '加载日志失败<br>' + escapeHtml(error.message) + '<br>' +
                                   '请刷新页面重试</div>';
             lineCountElement.textContent = '0';
@@ -530,7 +548,7 @@ function filterLogs() {
     
     if (currentLogs.length === 0) {
         // 修复：空日志时显示友好提示
-        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">没有日志数据</div>';
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text);">没有日志数据</div>';
         lineCountElement.textContent = '0';
         return;
     }
@@ -544,7 +562,7 @@ function filterLogs() {
     const filtered = filterByLevel(displayLogs, level);
     
     if (filtered.length === 0) {
-        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: #888;">没有匹配的日志</div>';
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text);">没有匹配的日志</div>';
         lineCountElement.textContent = '0';
     } else {
         let html = '';
@@ -590,7 +608,7 @@ function formatLogLine(log) {
             color = '#6a9955';
             icon = '✅ ';
         } else if (message.includes('❌')) {
-            color = '#f44747';
+            color = 'var(--znc-danger-text)';
             icon = '❌ ';
         } else if (message.includes('⚠')) {
             color = '#ffcc00';
@@ -949,13 +967,13 @@ function detectMobile() {
             // 移动端竖排显示
             container.innerHTML = `
                 <div style="display: flex; flex-direction: column; gap: 15px; width: 100%;">
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
-                        <h4 style="margin-top: 0; color: #007bff;"><i class="icon icon-info"></i> 日志等级说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-primary-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
                         <div style="font-size: 12px;">
                             <p><span style="color: #9cdcfe;">■ 信息</span> - 普通操作记录</p>
                             <p><span style="color: #6a9955;">✅ 成功</span> - 操作成功完成</p>
                             <p><span style="color: #ffcc00;">⚠ 警告</span> - 需要注意的情况</p>
-                            <p><span style="color: #f44747;">❌ 错误</span> - 错误和失败信息</p>
+                            <p><span style="color: var(--znc-danger-text);">❌ 错误</span> - 错误和失败信息</p>
                             <p><span style="color: #ce9178;">⏰ 时间</span> - 规则时间相关</p>
                             <p><span style="color: #b5cea8;">🔕 禁用</span> - 规则被禁用</p>
                             <p><span style="color: #c586c0;">🔒 强力</span> - 强力控制规则</p>
@@ -964,8 +982,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
-                        <h4 style="margin-top: 0; color: #28a745;"><i class="icon icon-settings"></i> 操作说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-success-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-success-text);"><i class="icon icon-settings"></i> 操作说明</h4>
                         <div style="font-size: 12px;">
                             <p><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p><strong>清空日志</strong> - 清空当前日志</p>
@@ -977,8 +995,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107;">
-                        <h4 style="margin-top: 0; color: #ffc107;"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-warn-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-warn-text);"><i class="icon icon-help-circle"></i> 使用提示</h4>
                         <div style="font-size: 12px;">
                             <p>• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p>• 自动刷新: 可配置间隔时间</p>
@@ -990,7 +1008,7 @@ function detectMobile() {
                             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;">
                                 <span style="color: #6a9955;">✅ 成功</span>
                                 <span style="color: #ffcc00;">⚠ 警告</span>
-                                <span style="color: #f44747;">❌ 错误</span>
+                                <span style="color: var(--znc-danger-text);">❌ 错误</span>
                                 <span style="color: #ce9178;">⏰ 时间</span>
                                 <span style="color: #b5cea8;">🔕 禁用</span>
                                 <span style="color: #c586c0;">🔒 强力</span>
@@ -1004,8 +1022,8 @@ function detectMobile() {
             // PC端横排显示
             container.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; width: 100%;">
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #007bff;">
-                        <h4 style="margin-top: 0; color: #007bff;"><i class="icon icon-info"></i> 日志等级说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-primary-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
                                 <span style="color: #9cdcfe; margin-right: 5px; flex-shrink: 0;">■</span>
@@ -1020,7 +1038,7 @@ function detectMobile() {
                                 <strong style="margin-right: 5px;">警告</strong> - 需要注意的情况
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #f44747; margin-right: 5px; flex-shrink: 0;">❌</span>
+                                <span style="color: var(--znc-danger-text); margin-right: 5px; flex-shrink: 0;">❌</span>
                                 <strong style="margin-right: 5px;">错误</strong> - 错误和失败信息
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
@@ -1046,8 +1064,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
-                        <h4 style="margin-top: 0; color: #28a745;"><i class="icon icon-settings"></i> 操作说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-success-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-success-text);"><i class="icon icon-settings"></i> 操作说明</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;"><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p style="margin: 0;"><strong>清空日志</strong> - 清空当前日志</p>
@@ -1059,8 +1077,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107;">
-                        <h4 style="margin-top: 0; color: #ffc107;"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-warn-text);">
+                        <h4 style="margin-top: 0; color: var(--znc-warn-text);"><i class="icon icon-help-circle"></i> 使用提示</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;">• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p style="margin: 0;">• 自动刷新: 可配置间隔时间</p>
@@ -1073,7 +1091,7 @@ function detectMobile() {
                                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                                     <span style="color: #6a9955;">✅ 成功</span>
                                     <span style="color: #ffcc00;">⚠ 警告</span>
-                                    <span style="color: #f44747;">❌ 错误</span>
+                                    <span style="color: var(--znc-danger-text);">❌ 错误</span>
                                     <span style="color: #ce9178;">⏰ 时间</span>
                                     <span style="color: #b5cea8;">🔕 禁用</span>
                                     <span style="color: #c586c0;">🔒 强力</span>
@@ -1188,7 +1206,7 @@ style.textContent = `
     height: 10px;
 }
 #log-content::-webkit-scrollbar-track {
-    background: #2d2d2d;
+    background: var(--znc-code-bg);
     border-radius: 5px;
 }
 #log-content::-webkit-scrollbar-thumb {
@@ -1252,12 +1270,12 @@ fieldset.cbi-section {
 
 /* 选择框样式 */
 select {
-    background-color: white;
-    border: 1px solid #ced4da;
+    background-color: var(--znc-input-bg);
+    border: 1px solid var(--znc-input-border);
     border-radius: 4px;
     padding: 5px 10px;
     font-size: 13px;
-    color: #495057;
+    color: var(--znc-primary-text);
 }
 
 /* 响应式调整 */
