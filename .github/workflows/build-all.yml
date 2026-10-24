@@ -63,12 +63,16 @@ jobs:
           FEEDNAME: zuoxm
           PACKAGES: ${{ matrix.package }}
 
-      - name: Upload ipk artifacts
+      - name: Upload build artifacts
         if: steps.check.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ipk-${{ matrix.sdk }}-${{ matrix.package }}
-          path: bin/packages/x86_64/zuoxm/*${{ matrix.package }}*.ipk
+          # openwrt-24.10 出 .ipk；openwrt-25.12 (iStore/immortalwrt) 出 .apk。
+          # 用宽通配 *${{ matrix.package }}* 同时收两种格式，避免漏掉 apk。
+          path: |
+            bin/packages/x86_64/zuoxm/*${{ matrix.package }}*.ipk
+            bin/packages/x86_64/zuoxm/*${{ matrix.package }}*.apk
           retention-days: 3
 
   release:
@@ -90,14 +94,15 @@ jobs:
       - name: Check for compiled packages
         id: check
         run: |
-          count=$(ls ipks/*.ipk 2>/dev/null | wc -l)
+          # ipk + apk 都算产物
+          count=$( (ls ipks/*.ipk 2>/dev/null; ls ipks/*.apk 2>/dev/null) | wc -l )
           echo "count=$count" >> $GITHUB_OUTPUT
           echo "Packages found: $count"
           if [ "$count" -eq 0 ]; then
             echo "No packages compiled, skipping release"
           else
             echo "Compiled packages:"
-            ls ipks/*.ipk
+            ls ipks/*.ipk ipks/*.apk 2>/dev/null
           fi
 
       - name: Generate release tag
@@ -120,16 +125,15 @@ jobs:
 
             **编译日期**: ${{ steps.ver.outputs.date }}
             **架构**: x86_64
-            **编译SDK**: openwrt-24.10 / openwrt-25.12
+            **编译SDK**: openwrt-24.10 (.ipk) / openwrt-25.12 (.apk)
 
             安装方法：
-            ```bash
-            opkg install <包名>.ipk
-            ```
+            - OpenWrt/ImmortalWrt(opkg)：`opkg install <包名>.ipk`
+            - iStore 设备(apk)：`apk add <包名>.apk`
 
             共 ${{ steps.check.outputs.count }} 个包：
             ```
-            $(ls ipks/*.ipk 2>/dev/null | xargs -n1 basename | sort)
+            $(ls ipks/*.ipk ipks/*.apk 2>/dev/null | xargs -n1 basename | sort)
             ```
-          files: ipks/*.ipk
+          files: ipks/*.ipk ipks/*.apk
           make_latest: true
