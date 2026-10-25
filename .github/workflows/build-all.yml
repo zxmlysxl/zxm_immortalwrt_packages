@@ -7,6 +7,22 @@ on:
   push:
     branches:
       - main
+    # 只有包源码变化才触发全量构建(29 包 x 2 SDK = 58 个 job)。
+    # 否则每次 push 都会往 runner 队列里灌 58 个 job, 把固件编译饿死。
+    paths:
+      - 'luci-app-*/**'
+      - 'lucky/**'
+      - 'momo/**'
+      - 'nikki/**'
+      - 'netspeedtest/**'
+      - 'watchdog/**'
+      - 'wrtbwmon/**'
+      - 'bandix/**'
+      - 'easytier/**'
+
+concurrency:
+  group: build-all-\${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
