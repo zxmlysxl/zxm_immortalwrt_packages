@@ -29,7 +29,7 @@ M.tok = {
 	hover_bg        = { "rgba(0,0,0,0.03)",       "rgba(255,255,255,0.07)" },
 	card_bg         = { "#ffffff",                 "#23272e" },
 	code_bg         = { "rgba(0,0,0,0.06)",       "rgba(255,255,255,0.08)" },
-	log_bg          = { "#ffffff",                 "#1e2126" },
+	log_bg          = { "#ffffff",                 "#17191d" },
 	log_text        = { "#1a202c",                 "#f0f0f0" },
 	log_info        = { "#2563eb",                 "#9cdcfe" },
 	log_info_bg     = { "rgba(37,99,235,0.05)",      "rgba(156,220,254,0.08)" },
@@ -38,7 +38,7 @@ M.tok = {
 	log_warn        = { "#856404",                 "#ffcc00" },
 	log_err         = { "#a62121",                 "#ce9178" },
 	log_stat        = { "#0f766e",                 "#4ec9b0" },
-	log_border      = { "rgba(0,0,0,0.10)",       "rgba(255,255,255,0.18)" },
+	log_border      = { "rgba(0,0,0,0.10)",       "rgba(255,255,255,0.20)" },
 	input_bg        = { "#ffffff",                 "rgba(255,255,255,0.08)" },
 	input_border    = { "rgba(0,0,0,0.25)",       "rgba(255,255,255,0.25)" },
 	success_bg      = { "#d4edda",                 "rgba(40,167,69,0.18)" },
@@ -61,9 +61,10 @@ local function sorted_names()
 end
 
 -- 生成 :root CSS 变量块；mode = 'light' | 'dark'
-function M.root(mode)
+function M.root(mode, sel)
 	local idx = (mode == 'dark') and 2 or 1
-	local out = { ":root {" }
+	sel = sel or ":root"
+	local out = { sel .. " {" }
 	for _, name in ipairs(sorted_names()) do
 		table.insert(out, string.format("  --znc-%s: %s;", name, M.tok[name][idx]))
 	end
@@ -128,7 +129,10 @@ function znetcontrolDetectMode() {
 
 -- 应用函数 JS：检测 + 注入暗色变量块
 function M.js_apply()
-	local json = json_escape(M.root("dark"))
+	-- 暗色块选择器用 :root:root (优先级 0,2,0 > 亮色块 :root 的 0,1,0),
+	-- 且必须插到 body 末尾 —— 页面默认亮色 :root 块写在 body 里,
+	-- 同优先级时靠后声明者才生效, 插 head 会被 body 里的亮色块反向覆盖。
+	local json = json_escape(M.root("dark", ":root:root"))
 	return string.format([[
 function znetcontrolApplyTheme() {
   var mode = znetcontrolDetectMode();
@@ -138,7 +142,7 @@ function znetcontrolApplyTheme() {
     var s = document.createElement('style');
     s.id = 'znetcontrol-theme-style';
     s.textContent = %s;
-    document.head.appendChild(s);
+    (document.body || document.head).appendChild(s);
   }
   document.documentElement.setAttribute('data-zncolor', mode);
   return mode;
