@@ -50,6 +50,7 @@ M.tok = {
 	danger_bg       = { "#f8d7da",                 "rgba(220,53,69,0.18)" },
 	danger_text     = { "#721c24",                 "#ff8a95" },
 	danger_border   = { "#f5c6cb",                 "rgba(220,53,69,0.45)" },
+	badge_shadow    = { "inset 0 -2px 4px rgba(0,0,0,0.06)", "inset 0 -2px 4px rgba(0,0,0,0.35)" },
 }
 
 local function sorted_names()
