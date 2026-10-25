@@ -32,6 +32,7 @@ M.tok = {
 	log_bg          = { "#ffffff",                 "#1e2126" },
 	log_text        = { "#1a202c",                 "#e8e8e8" },
 	log_info        = { "#2563eb",                 "#9cdcfe" },
+	log_info_bg     = { "rgba(37,99,235,0.05)",      "rgba(156,220,254,0.08)" },
 	log_ts          = { "#1e40af",                 "#569cd6" },
 	log_ok          = { "#155724",                 "#6a9955" },
 	log_warn        = { "#856404",                 "#ffcc00" },
