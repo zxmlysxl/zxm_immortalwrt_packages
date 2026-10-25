@@ -967,8 +967,8 @@ function detectMobile() {
             // 移动端竖排显示
             container.innerHTML = `
                 <div style="display: flex; flex-direction: column; gap: 15px; width: 100%;">
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-primary-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-primary-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-primary-text);"><i class="icon icon-info" style="margin-right: 6px;"></i>日志等级说明</h4>
                         <div style="font-size: 12px;">
                             <p><span style="color: var(--znc-log-info);">■ 信息</span> - 普通操作记录</p>
                             <p><span style="color: var(--znc-log-ok);">✅ 成功</span> - 操作成功完成</p>
@@ -982,8 +982,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-success-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-success-text);"><i class="icon icon-settings"></i> 操作说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-success-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-success-text);"><i class="icon icon-settings" style="margin-right: 6px;"></i>操作说明</h4>
                         <div style="font-size: 12px;">
                             <p><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p><strong>清空日志</strong> - 清空当前日志</p>
@@ -995,8 +995,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-warn-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-warn-text);"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-warn-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-warn-text);"><i class="icon icon-help-circle" style="margin-right: 6px;"></i>使用提示</h4>
                         <div style="font-size: 12px;">
                             <p>• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p>• 自动刷新: 可配置间隔时间</p>
@@ -1022,8 +1022,8 @@ function detectMobile() {
             // PC端横排显示
             container.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; width: 100%;">
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-primary-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-primary-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-primary-text);"><i class="icon icon-info" style="margin-right: 6px;"></i>日志等级说明</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
                                 <span style="color: var(--znc-log-info); margin-right: 5px; flex-shrink: 0;">■</span>
@@ -1064,8 +1064,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-success-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-success-text);"><i class="icon icon-settings"></i> 操作说明</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-success-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-success-text);"><i class="icon icon-settings" style="margin-right: 6px;"></i>操作说明</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;"><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p style="margin: 0;"><strong>清空日志</strong> - 清空当前日志</p>
@@ -1077,8 +1077,8 @@ function detectMobile() {
                         </div>
                     </div>
                     
-                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-warn-text);">
-                        <h4 style="margin-top: 0; color: var(--znc-warn-text);"><i class="icon icon-help-circle"></i> 使用提示</h4>
+                    <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 10px; border: 1px solid var(--znc-border); box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid var(--znc-warn-text);">
+                        <h4 style="margin: 0 0 10px 0; letter-spacing: 0.3px; font-weight: 600; color: var(--znc-warn-text);"><i class="icon icon-help-circle" style="margin-right: 6px;"></i>使用提示</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;">• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p style="margin: 0;">• 自动刷新: 可配置间隔时间</p>
