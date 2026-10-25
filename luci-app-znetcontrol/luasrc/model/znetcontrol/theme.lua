@@ -100,8 +100,22 @@ function znetcontrolDetectMode() {
         var lum = 0.2126 * parseInt(parts[0], 10)
                 + 0.7152 * parseInt(parts[1], 10)
                 + 0.0722 * parseInt(parts[2], 10);
-        if (isNaN(lum)) return 'light';
-        return lum < 120 ? 'dark' : 'light';
+        if (!isNaN(lum)) return lum < 120 ? 'dark' : 'light';
+      }
+    }
+  } catch (e) {}
+  // ②.5 实测 body 背景明暗（最通用判据：任何主题改了 body 背景都能识别）
+  try {
+    if (document.body) {
+      var bg = getComputedStyle(document.body).backgroundColor;
+      if (bg && bg.indexOf('rgb') === 0) {
+        var m = bg.match(/\d+/g);
+        if (m && m.length >= 3) {
+          var lum2 = 0.2126 * parseInt(m[0], 10)
+                   + 0.7152 * parseInt(m[1], 10)
+                   + 0.0722 * parseInt(m[2], 10);
+          if (!isNaN(lum2)) return lum2 < 128 ? 'dark' : 'light';
+        }
       }
     }
   } catch (e) {}
