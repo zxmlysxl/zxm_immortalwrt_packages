@@ -133,7 +133,7 @@ if (document.readyState === 'loading') {
                         height: 500px;
                         overflow: auto;
                         background: var(--znc-log-bg);
-                        color: var(--znc-primary-text);
+                        color: var(--znc-log-text);
                         padding: 15px;
                         border: 2px solid var(--znc-log-border);
                         border-radius: 8px;
@@ -187,7 +187,7 @@ if (document.readyState === 'loading') {
             <div class="cbi-value-field">
                 <pre id="status-content" style="
                     background: var(--znc-log-bg);
-                    color: var(--znc-primary-text);
+                    color: var(--znc-log-text);
                     padding: 15px;
                     border-radius: 5px;
                     font-family: monospace;
@@ -582,17 +582,17 @@ function formatLogLine(log) {
     if (log.includes('═') || log.includes('║') || log.includes('╔') || 
         log.includes('╚') || log.includes('─') || log.includes('│') ||
         log.includes('┌') || log.includes('└')) {
-        return '<span style="color: #4ec9b0;">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat);">' + escapeHtml(log) + '</span>';
     }
     
     // 处理规则统计
     if (log.includes('📊')) {
-        return '<span style="color: #4ec9b0; font-weight: bold;">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat); font-weight: bold;">' + escapeHtml(log) + '</span>';
     }
     
     // 处理更新开始/结束标记
     if (log.includes('======') || log.includes('============')) {
-        return '<span style="color: #569cd6; font-weight: bold;">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat); font-weight: bold;">' + escapeHtml(log) + '</span>';
     }
     
     // 处理带时间戳的日志
@@ -601,41 +601,41 @@ function formatLogLine(log) {
         const timestamp = timestampMatch[1];
         const message = timestampMatch[2] || '';
         
-        let color = '#9cdcfe'; // 默认信息色
+        let color = 'var(--znc-log-info)'; // 默认信息色
         let icon = '';
         
         if (message.includes('✅')) {
-            color = '#6a9955';
+            color = 'var(--znc-log-ok)';
             icon = '✅ ';
         } else if (message.includes('❌')) {
             color = 'var(--znc-danger-text)';
             icon = '❌ ';
         } else if (message.includes('⚠')) {
-            color = '#ffcc00';
+            color = 'var(--znc-log-warn)';
             icon = '⚠ ';
         } else if (message.includes('⏰')) {
-            color = '#ce9178';
+            color = 'var(--znc-log-err)';
             icon = '⏰ ';
         } else if (message.includes('🔕')) {
-            color = '#b5cea8';
+            color = 'var(--znc-log-warn)';
             icon = '🔕 ';
         } else if (message.includes('🔒')) {
-            color = '#c586c0';
+            color = 'var(--znc-log-stat)';
             icon = '🔒 ';
         } else if (message.includes('🔗')) {
-            color = '#569cd6';
+            color = 'var(--znc-log-stat)';
             icon = '🔗 ';
         } else if (message.includes('解析规则')) {
-            color = '#c586c0';
+            color = 'var(--znc-log-stat)';
         } else if (message.includes('重新加载规则') || message.includes('从配置文件加载规则')) {
-            color = '#569cd6';
+            color = 'var(--znc-log-stat)';
         }
         
-        return '<span style="color: #569cd6;">' + escapeHtml(timestamp) + '</span> - ' +
+        return '<span style="color: var(--znc-log-ts);">' + escapeHtml(timestamp) + '</span> - ' +
                '<span style="color: ' + color + '">' + icon + escapeHtml(message) + '</span>';
     }
     
-    return '<span style="color: #9cdcfe;">' + escapeHtml(log) + '</span>';
+    return '<span style="color: var(--znc-log-info);">' + escapeHtml(log) + '</span>';
 }
 
 function clearLogs() {
@@ -970,15 +970,15 @@ function detectMobile() {
                     <div style="background: var(--znc-box-bg); padding: 15px; border-radius: 5px; border-left: 4px solid var(--znc-primary-text);">
                         <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
                         <div style="font-size: 12px;">
-                            <p><span style="color: #9cdcfe;">■ 信息</span> - 普通操作记录</p>
-                            <p><span style="color: #6a9955;">✅ 成功</span> - 操作成功完成</p>
-                            <p><span style="color: #ffcc00;">⚠ 警告</span> - 需要注意的情况</p>
+                            <p><span style="color: var(--znc-log-info);">■ 信息</span> - 普通操作记录</p>
+                            <p><span style="color: var(--znc-log-ok);">✅ 成功</span> - 操作成功完成</p>
+                            <p><span style="color: var(--znc-log-warn);">⚠ 警告</span> - 需要注意的情况</p>
                             <p><span style="color: var(--znc-danger-text);">❌ 错误</span> - 错误和失败信息</p>
-                            <p><span style="color: #ce9178;">⏰ 时间</span> - 规则时间相关</p>
-                            <p><span style="color: #b5cea8;">🔕 禁用</span> - 规则被禁用</p>
-                            <p><span style="color: #c586c0;">🔒 强力</span> - 强力控制规则</p>
-                            <p><span style="color: #569cd6;">🔗 普通</span> - 普通控制规则</p>
-                            <p><span style="color: #4ec9b0;">📊 统计</span> - 规则统计信息</p>
+                            <p><span style="color: var(--znc-log-err);">⏰ 时间</span> - 规则时间相关</p>
+                            <p><span style="color: var(--znc-log-warn);">🔕 禁用</span> - 规则被禁用</p>
+                            <p><span style="color: var(--znc-log-stat);">🔒 强力</span> - 强力控制规则</p>
+                            <p><span style="color: var(--znc-log-stat);">🔗 普通</span> - 普通控制规则</p>
+                            <p><span style="color: var(--znc-log-stat);">📊 统计</span> - 规则统计信息</p>
                         </div>
                     </div>
                     
@@ -1006,13 +1006,13 @@ function detectMobile() {
                             <p>• 支持按类型过滤: 信息、成功、警告、错误等</p>
                             <p>• 日志表情说明:</p>
                             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;">
-                                <span style="color: #6a9955;">✅ 成功</span>
-                                <span style="color: #ffcc00;">⚠ 警告</span>
+                                <span style="color: var(--znc-log-ok);">✅ 成功</span>
+                                <span style="color: var(--znc-log-warn);">⚠ 警告</span>
                                 <span style="color: var(--znc-danger-text);">❌ 错误</span>
-                                <span style="color: #ce9178;">⏰ 时间</span>
-                                <span style="color: #b5cea8;">🔕 禁用</span>
-                                <span style="color: #c586c0;">🔒 强力</span>
-                                <span style="color: #569cd6;">🔗 普通</span>
+                                <span style="color: var(--znc-log-err);">⏰ 时间</span>
+                                <span style="color: var(--znc-log-warn);">🔕 禁用</span>
+                                <span style="color: var(--znc-log-stat);">🔒 强力</span>
+                                <span style="color: var(--znc-log-stat);">🔗 普通</span>
                             </div>
                         </div>
                     </div>
@@ -1026,15 +1026,15 @@ function detectMobile() {
                         <h4 style="margin-top: 0; color: var(--znc-primary-text);"><i class="icon icon-info"></i> 日志等级说明</h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #9cdcfe; margin-right: 5px; flex-shrink: 0;">■</span>
+                                <span style="color: var(--znc-log-info); margin-right: 5px; flex-shrink: 0;">■</span>
                                 <strong style="margin-right: 5px;">信息</strong> - 普通操作记录
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #6a9955; margin-right: 5px; flex-shrink: 0;">✅</span>
+                                <span style="color: var(--znc-log-ok); margin-right: 5px; flex-shrink: 0;">✅</span>
                                 <strong style="margin-right: 5px;">成功</strong> - 操作成功完成
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #ffcc00; margin-right: 5px; flex-shrink: 0;">⚠</span>
+                                <span style="color: var(--znc-log-warn); margin-right: 5px; flex-shrink: 0;">⚠</span>
                                 <strong style="margin-right: 5px;">警告</strong> - 需要注意的情况
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
@@ -1042,23 +1042,23 @@ function detectMobile() {
                                 <strong style="margin-right: 5px;">错误</strong> - 错误和失败信息
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #ce9178; margin-right: 5px; flex-shrink: 0;">⏰</span>
+                                <span style="color: var(--znc-log-err); margin-right: 5px; flex-shrink: 0;">⏰</span>
                                 <strong style="margin-right: 5px;">时间</strong> - 规则时间相关
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #b5cea8; margin-right: 5px; flex-shrink: 0;">🔕</span>
+                                <span style="color: var(--znc-log-warn); margin-right: 5px; flex-shrink: 0;">🔕</span>
                                 <strong style="margin-right: 5px;">禁用</strong> - 规则被禁用
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #c586c0; margin-right: 5px; flex-shrink: 0;">🔒</span>
+                                <span style="color: var(--znc-log-stat); margin-right: 5px; flex-shrink: 0;">🔒</span>
                                 <strong style="margin-right: 5px;">强力</strong> - 强力控制规则
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #569cd6; margin-right: 5px; flex-shrink: 0;">🔗</span>
+                                <span style="color: var(--znc-log-stat); margin-right: 5px; flex-shrink: 0;">🔗</span>
                                 <strong style="margin-right: 5px;">普通</strong> - 普通控制规则
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: #4ec9b0; margin-right: 5px; flex-shrink: 0;">📊</span>
+                                <span style="color: var(--znc-log-stat); margin-right: 5px; flex-shrink: 0;">📊</span>
                                 <strong style="margin-right: 5px;">统计</strong> - 规则统计信息
                             </p>
                         </div>
@@ -1089,13 +1089,13 @@ function detectMobile() {
                             <div style="margin-top: 5px;">
                                 <p style="margin: 0 0 3px 0; font-weight: bold;">日志表情说明:</p>
                                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                                    <span style="color: #6a9955;">✅ 成功</span>
-                                    <span style="color: #ffcc00;">⚠ 警告</span>
+                                    <span style="color: var(--znc-log-ok);">✅ 成功</span>
+                                    <span style="color: var(--znc-log-warn);">⚠ 警告</span>
                                     <span style="color: var(--znc-danger-text);">❌ 错误</span>
-                                    <span style="color: #ce9178;">⏰ 时间</span>
-                                    <span style="color: #b5cea8;">🔕 禁用</span>
-                                    <span style="color: #c586c0;">🔒 强力</span>
-                                    <span style="color: #569cd6;">🔗 普通</span>
+                                    <span style="color: var(--znc-log-err);">⏰ 时间</span>
+                                    <span style="color: var(--znc-log-warn);">🔕 禁用</span>
+                                    <span style="color: var(--znc-log-stat);">🔒 强力</span>
+                                    <span style="color: var(--znc-log-stat);">🔗 普通</span>
                                 </div>
                             </div>
                         </div>
