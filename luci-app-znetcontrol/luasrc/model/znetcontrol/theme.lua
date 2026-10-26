@@ -66,7 +66,10 @@ function M.root(mode, sel)
 	sel = sel or ":root"
 	local out = { sel .. " {" }
 	for _, name in ipairs(sorted_names()) do
-		table.insert(out, string.format("  --znc-%s: %s;", name, M.tok[name][idx]))
+		-- 变量名用连字符: token 名 log_bg -> --znc-log-bg
+		-- (htm 里一律用 var(--znc-log-bg) 引用, 下划线会导致全部落空 fallback)
+		local var = name:gsub("_", "-")
+		table.insert(out, string.format("  --znc-%s: %s;", var, M.tok[name][idx]))
 	end
 	table.insert(out, "}")
 	return table.concat(out, "\n")
