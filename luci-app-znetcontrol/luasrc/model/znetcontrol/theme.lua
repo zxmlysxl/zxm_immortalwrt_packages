@@ -87,42 +87,50 @@ end
 
 -- 检测函数 JS（内嵌进页面 <script>）
 M.js_detect = [[
+// 最简可靠方案: 只量"页面实际渲染出来的背景色", 不猜主题变量。
+// 判据优先级: 手动覆盖 > 主题显式声明 > 实测内容区背景 > 实测文字色 > 系统偏好 > light
+function znetcontrolParseColor(c) {
+  if (!c || c.indexOf('rgb') !== 0) return null;
+  var m = c.match(/[0-9.]+/g);
+  if (!m || m.length < 3) return null;
+  var a = m.length > 3 ? parseFloat(m[3]) : 1;
+  if (a <= 0.5) return null;              // 透明色不算, 继续往上找
+  return [parseFloat(m[0]), parseFloat(m[1]), parseFloat(m[2])];
+}
+function znetcontrolLum(c) {
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+// 从内容容器往上找第一个"不透明"的背景, 这就是用户眼睛看到的底色
+function znetcontrolContentBg() {
+  var el = document.querySelector('.cbi-map') || document.body || document.documentElement;
+  while (el && el.nodeType === 1) {
+    var c = znetcontrolParseColor(getComputedStyle(el).backgroundColor);
+    if (c) return c;
+    el = el.parentElement;
+  }
+  return null;
+}
 function znetcontrolDetectMode() {
-  // ① 主题自行声明（预留扩展点）
-  var html = document.documentElement;
-  var dm = html.getAttribute('data-mode');
+  // 0) 手动覆盖: URL 加 ?znc=dark 或 ?znc=light (调试/强制用)
+  try {
+    var q = (window.location.search || '') + (window.location.hash || '');
+    var mm = q.match(/[?&]znc=(dark|light)/);
+    if (mm) return mm[1];
+  } catch (e) {}
+  // 1) 主题显式声明
+  var dm = document.documentElement.getAttribute('data-mode');
   if (dm === 'dark' || dm === 'light') return dm;
-  // ② 实测主题 CSS 变量出明暗（kucat 暗色 --primary-rgbbody=33,45,60）
+  // 2) 实测内容区实际背景色 (最可靠: 看到什么就是什么)
+  var bg = znetcontrolContentBg();
+  if (bg) return znetcontrolLum(bg) < 128 ? 'dark' : 'light';
+  // 3) 实测页面文字色: 文字亮 => 暗色主题
   try {
-    var rgb = getComputedStyle(html).getPropertyValue('--primary-rgbbody');
-    if (rgb) {
-      var parts = rgb.trim().split(',');
-      if (parts.length >= 3) {
-        var lum = 0.2126 * parseInt(parts[0], 10)
-                + 0.7152 * parseInt(parts[1], 10)
-                + 0.0722 * parseInt(parts[2], 10);
-        if (!isNaN(lum)) return lum < 120 ? 'dark' : 'light';
-      }
-    }
+    var tc = znetcontrolParseColor(getComputedStyle(document.body).color);
+    if (tc) return znetcontrolLum(tc) < 128 ? 'light' : 'dark';
   } catch (e) {}
-  // ②.5 实测 body 背景明暗（最通用判据：任何主题改了 body 背景都能识别）
-  try {
-    if (document.body) {
-      var bg = getComputedStyle(document.body).backgroundColor;
-      if (bg && bg.indexOf('rgb') === 0) {
-        var m = bg.match(/\d+/g);
-        if (m && m.length >= 3) {
-          var lum2 = 0.2126 * parseInt(m[0], 10)
-                   + 0.7152 * parseInt(m[1], 10)
-                   + 0.0722 * parseInt(m[2], 10);
-          if (!isNaN(lum2)) return lum2 < 128 ? 'dark' : 'light';
-        }
-      }
-    }
-  } catch (e) {}
-  // ③ 系统偏好兜底
+  // 4) 系统偏好
   if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-  // ④ 默认
+  // 5) 默认
   return 'light';
 }
 ]]

@@ -10,10 +10,18 @@ local znc_apply = znc.js_bundle()
 
 <script>
 <%= znc_apply %>
+function znetcontrolShowMode(){
+  var m = znetcontrolApplyTheme();
+  var el = document.getElementById('znc-mode');
+  if (el) {
+    el.textContent = (m === 'dark') ? '暗色' : '亮色';
+    el.title = '当前生效配色: ' + m + ' (URL 加 ?znc=dark / ?znc=light 可强制)';
+  }
+}
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', znetcontrolApplyTheme);
+  document.addEventListener('DOMContentLoaded', znetcontrolShowMode);
 } else {
-  znetcontrolApplyTheme();
+  znetcontrolShowMode();
 }
 </script>
 
@@ -125,6 +133,7 @@ if (document.readyState === 'loading') {
                             共 <span id="line-count">0</span> 行 | 
                             刷新间隔: <span id="refresh-display">30</span>秒 |
                             备份模式: <span id="backup-display">不备份</span> |
+                            配色模式: <span id="znc-mode" title="检测中...">检测中</span> |
                             最后更新: <span id="last-update">--</span>
                         </div>
                     </div>
