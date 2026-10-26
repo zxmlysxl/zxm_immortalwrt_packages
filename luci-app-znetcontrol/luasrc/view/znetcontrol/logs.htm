@@ -10,13 +10,27 @@ local znc_apply = znc.js_bundle()
 
 <script>
 <%= znc_apply %>
-function znetcontrolShowMode(){
-  var m = znetcontrolApplyTheme();
+function znetcontrolUpdateModeLabel(){
   var el = document.getElementById('znc-mode');
-  if (el) {
-    el.textContent = (m === 'dark') ? '暗色' : '亮色';
-    el.title = '当前生效配色: ' + m + ' (URL 加 ?znc=dark / ?znc=light 可强制)';
-  }
+  if (!el) return;
+  var ov = znetcontrolGetOverride();
+  var m = znetcontrolDetectMode();
+  el.textContent = ov ? (ov === 'dark' ? '强制暗色' : '强制亮色')
+                      : ('自动·' + (m === 'dark' ? '暗色' : '亮色'));
+  var p = znetcontrolProbe();
+  el.title = '当前: ' + el.textContent + '\n实测内容区背景: ' + (p.bg || '未取到') +
+             '\n实测页面底色: ' + (p.bodyBg || '-') + '\n实测页面字色: ' + (p.bodyColor || '-') +
+             '\n点击切换: 自动 -> 暗色 -> 亮色 -> 自动';
+}
+function znetcontrolCycleMode(){
+  var ov = znetcontrolGetOverride();
+  var next = (!ov) ? 'dark' : (ov === 'dark' ? 'light' : null);
+  znetcontrolSetMode(next);
+  znetcontrolUpdateModeLabel();
+}
+function znetcontrolShowMode(){
+  znetcontrolApplyTheme();
+  znetcontrolUpdateModeLabel();
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', znetcontrolShowMode);
@@ -133,7 +147,7 @@ if (document.readyState === 'loading') {
                             共 <span id="line-count">0</span> 行 | 
                             刷新间隔: <span id="refresh-display">30</span>秒 |
                             备份模式: <span id="backup-display">不备份</span> |
-                            配色模式: <span id="znc-mode" title="检测中...">检测中</span> |
+                            配色模式: <span id="znc-mode" onclick="znetcontrolCycleMode()" style="cursor:pointer;padding:1px 7px;border-radius:6px;border:1px solid var(--znc-border, rgba(0,0,0,0.10));background: var(--znc-box-bg, rgba(0,0,0,0.03));" title="检测中...">检测中</span> |
                             最后更新: <span id="last-update">--</span>
                         </div>
                     </div>

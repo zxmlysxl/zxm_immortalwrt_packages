@@ -87,21 +87,33 @@ end
 
 -- 检测函数 JS（内嵌进页面 <script>）
 M.js_detect = [[
-// 最简可靠方案: 只量"页面实际渲染出来的背景色", 不猜主题变量。
-// 判据优先级: 手动覆盖 > 主题显式声明 > 实测内容区背景 > 实测文字色 > 系统偏好 > light
+// 配色模式存储键: znc_mode = 'dark' | 'light' | 不存在=自动
+function znetcontrolGetOverride(){
+  try {
+    var v = window.localStorage.getItem('znc_mode');
+    if (v === 'dark' || v === 'light') return v;
+  } catch (e) {}
+  return null;
+}
+function znetcontrolSetOverride(v){
+  try {
+    if (v === 'dark' || v === 'light') window.localStorage.setItem('znc_mode', v);
+    else window.localStorage.removeItem('znc_mode');
+  } catch (e) {}
+}
 function znetcontrolParseColor(c) {
   if (!c || c.indexOf('rgb') !== 0) return null;
   var m = c.match(/[0-9.]+/g);
   if (!m || m.length < 3) return null;
   var a = m.length > 3 ? parseFloat(m[3]) : 1;
-  if (a <= 0.5) return null;              // 透明色不算, 继续往上找
+  if (a <= 0.5) return null;
   return [parseFloat(m[0]), parseFloat(m[1]), parseFloat(m[2])];
 }
 function znetcontrolLum(c) {
   return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 }
-// 从内容容器往上找第一个"不透明"的背景, 这就是用户眼睛看到的底色
-function znetcontrolContentBg() {
+// 从内容容器往上找第一个不透明背景 = 用户眼睛看到的底色
+function znetcontrolContentBg(){
   var el = document.querySelector('.cbi-map') || document.body || document.documentElement;
   while (el && el.nodeType === 1) {
     var c = znetcontrolParseColor(getComputedStyle(el).backgroundColor);
@@ -110,27 +122,40 @@ function znetcontrolContentBg() {
   }
   return null;
 }
-function znetcontrolDetectMode() {
-  // 0) 手动覆盖: URL 加 ?znc=dark 或 ?znc=light (调试/强制用)
+// 供页面显示的实测信息
+function znetcontrolProbe(){
+  var o = {mode:null, bg:null, bodyBg:null, bodyColor:null, lum:null};
+  try { o.bodyBg = getComputedStyle(document.body).backgroundColor; } catch(e){}
+  try { o.bodyColor = getComputedStyle(document.body).color; } catch(e){}
+  var bg = znetcontrolContentBg();
+  if (bg) { o.bg = 'rgb('+Math.round(bg[0])+', '+Math.round(bg[1])+', '+Math.round(bg[2])+')'; o.lum = Math.round(znetcontrolLum(bg)); }
+  o.mode = znetcontrolDetectMode();
+  return o;
+}
+function znetcontrolDetectMode(){
+  // 1) 手动覆盖 (localStorage, 页面上的开关写入)
+  var ov = znetcontrolGetOverride();
+  if (ov) return ov;
+  // 2) URL 强制: ?znc=dark / ?znc=light
   try {
     var q = (window.location.search || '') + (window.location.hash || '');
     var mm = q.match(/[?&]znc=(dark|light)/);
     if (mm) return mm[1];
   } catch (e) {}
-  // 1) 主题显式声明
+  // 3) 主题显式声明
   var dm = document.documentElement.getAttribute('data-mode');
   if (dm === 'dark' || dm === 'light') return dm;
-  // 2) 实测内容区实际背景色 (最可靠: 看到什么就是什么)
+  // 4) 实测内容区实际背景色 (最可靠: 看到什么就是什么)
   var bg = znetcontrolContentBg();
   if (bg) return znetcontrolLum(bg) < 128 ? 'dark' : 'light';
-  // 3) 实测页面文字色: 文字亮 => 暗色主题
+  // 5) 实测页面文字色: 文字亮 => 暗色主题
   try {
     var tc = znetcontrolParseColor(getComputedStyle(document.body).color);
     if (tc) return znetcontrolLum(tc) < 128 ? 'light' : 'dark';
   } catch (e) {}
-  // 4) 系统偏好
+  // 6) 系统偏好
   if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-  // 5) 默认
+  // 7) 默认
   return 'light';
 }
 ]]
@@ -154,6 +179,11 @@ function znetcontrolApplyTheme() {
   }
   document.documentElement.setAttribute('data-zncolor', mode);
   return mode;
+}
+// 手动切换配色: v = 'dark' | 'light' | null(回到自动)
+function znetcontrolSetMode(v) {
+  znetcontrolSetOverride(v);
+  return znetcontrolApplyTheme();
 }
 ]], json)
 end
