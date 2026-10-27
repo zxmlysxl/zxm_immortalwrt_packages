@@ -1,8 +1,17 @@
 #!/bin/sh /etc/rc.common
+# ZNetControl init.d
+# 同时管理:
+#   1) nftables 管控规则服务（znetcontrolctrl 30s watch loop）
+#   2) 定时任务（/etc/crontabs/root 内标记块 #znc-sched-begin .. #znc-sched-end）
 #
-# ZNetControl init.d脚本 - 修复数字错误版
+# 定时任务设计目标（比 taskplan 可靠）:
+#   - cron 行写入 /etc/crontabs/root 持久文件, 重启不丢
+#   - uci commit 后由 ucitrack 触发 reload, 自动重生成 cron 块
+#   - boot 时兜底重生成一次
+#   - 标记块用 sed 精确定位, 不影响用户其它 crontab 行
 
 START=99
+STOP=10
 USE_PROCD=1
 
 NAME=znetcontrol
@@ -10,181 +19,190 @@ PROG=/usr/bin/znetcontrolctrl
 PIDFILE="/var/run/${NAME}.pid"
 LOGFILE="/var/log/${NAME}.log"
 RUNDIR="/var/run/znetcontrol"
+CRON=/etc/crontabs/root
+ZBEGIN="#znc-sched-begin"
+ZEND="#znc-sched-end"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $@" >> "$LOGFILE"
 }
 
+# ---------- 定时任务 cron 块生成 ----------
+sched_write() {
+    [ -d /etc/taskplan ] || mkdir -p /etc/taskplan
+    [ -f "$CRON" ] || echo "" > "$CRON"
+    chmod 755 "$CRON" 2>/dev/null
+
+    # 自定义脚本从 UCI 落地
+    if [ "$(uci -q get znetcontrol.settings.customscript | wc -l)" -gt 0 ] 2>/dev/null; then
+        uci -q get znetcontrol.settings.customscript > /etc/taskplan/znc-custom-script 2>/dev/null
+        sed -i 's/\r$//' /etc/taskplan/znc-custom-script 2>/dev/null
+        chmod 755 /etc/taskplan/znc-custom-script 2>/dev/null
+    fi
+
+    # 先删旧块（无论之前有没有）
+    sed -i "/^${ZBEGIN}$/,/^${ZEND}$/d" "$CRON" 2>/dev/null
+
+    # 收集启用的 stime 任务, 一次性写标记块
+    {
+        echo "${ZBEGIN}"
+        ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
+        for i in $(seq 0 $((ssum - 1))); do
+            en=$(uci -q get "znetcontrol.@stime[${i}].enable" 2>/dev/null)
+            [ "$en" = "1" ] || continue
+            mt=$(uci -q get "znetcontrol.@stime[${i}].minute" 2>/dev/null); [ -n "$mt" ] || mt="0"
+            hr=$(uci -q get "znetcontrol.@stime[${i}].hour" 2>/dev/null);  [ -n "$hr" ] || hr="0"
+            mo=$(uci -q get "znetcontrol.@stime[${i}].month" 2>/dev/null); [ -n "$mo" ] || mo="*"
+            wk=$(uci -q get "znetcontrol.@stime[${i}].week" 2>/dev/null);  [ -n "$wk" ] || wk="*"
+            styp=$(uci -q get "znetcontrol.@stime[${i}].stype" 2>/dev/null); [ -n "$styp" ] || styp="network"
+            rmark=$(uci -q get "znetcontrol.@stime[${i}].remarks" 2>/dev/null)
+            [ -n "$rmark" ] || rmark="task${i}"
+            # 备注可能含空格, 用双引号保护, 作为 handler 的第二个参数
+            echo "${mt} ${hr} * ${mo} ${wk} /usr/bin/znc-schedhandler ${styp} \"${rmark}\""
+        done
+        echo "${ZEND}"
+    } >> "$CRON"
+
+    /etc/init.d/cron reload >/dev/null 2>&1
+    log "sched_write: 重生成定时任务块, 启用任务数=$(grep -c 'znc-schedhandler' "$CRON" 2>/dev/null || echo 0)"
+}
+
+# ---------- nftables 规则服务 ----------
 validate_service() {
-    # 修复：使用正确的数字处理方法
-    local enabled_count=0
-    
-    # 方法1：使用 uci 命令
-    if [ -f "/etc/config/znetcontrol" ]; then
-        # 修复：避免空值
-        enabled_count=$(uci show znetcontrol 2>/dev/null | grep -c '\.enable="1"' 2>/dev/null || echo "0")
-        
-        # 确保是数字
-        enabled_count=$(echo "$enabled_count" | grep -E '^[0-9]+$' || echo "0")
-    fi
-    
+    local enabled_count
+    enabled_count=$(uci show znetcontrol 2>/dev/null | grep -c '\.enable="1"' 2>/dev/null || echo 0)
+    enabled_count=$(echo "$enabled_count" | grep -E '^[0-9]+$' || echo 0)
     if [ "$enabled_count" -eq 0 ] 2>/dev/null; then
-        echo "没有启用规则，不启动服务"
         return 1
     fi
-    
-    # 检查必要的工具
-    if ! command -v nft >/dev/null 2>&1; then
-        echo "nftables 未安装"
-        return 1
-    fi
-    
+    command -v nft >/dev/null 2>&1 || return 1
     return 0
 }
 
 pre_start_cleanup() {
-    echo "启动前清理..."
-    
-    # 清理旧的 nftables 表
     local tables
     tables=$(nft list tables 2>/dev/null | awk '{print $2}' 2>/dev/null)
-    
+    local table
     for table in $tables; do
-        if echo "$table" | grep -q "znetcontrol"; then
-            echo "清理表: $table"
-            nft delete table "$table" 2>/dev/null || true
-        fi
+        echo "$table" | grep -q "znetcontrol" && nft delete table "$table" 2>/dev/null || true
     done
-    
-    # 清理旧文件
     rm -rf "$RUNDIR" 2>/dev/null
     mkdir -p "$RUNDIR"
-    
-    # 初始化防火墙规则
-    echo "初始化防火墙规则..."
     if /usr/bin/znetcontrol start >/tmp/znetcontrol_start.log 2>&1; then
-        echo "防火墙规则初始化成功"
         return 0
-    else
-        echo "防火墙规则初始化失败"
-        cat /tmp/znetcontrol_start.log 2>/dev/null || true
-        return 1
     fi
+    cat /tmp/znetcontrol_start.log 2>/dev/null || true
+    return 1
 }
 
 post_stop_cleanup() {
-    echo "停止后清理..."
-    
-    # 清理 nftables 表
     local tables
     tables=$(nft list tables 2>/dev/null | awk '{print $2}' 2>/dev/null)
-    
+    local table
     for table in $tables; do
-        if echo "$table" | grep -q "znetcontrol"; then
-            echo "删除表: $table"
-            nft delete table "$table" 2>/dev/null || true
-        fi
+        echo "$table" | grep -q "znetcontrol" && nft delete table "$table" 2>/dev/null || true
     done
-    
-    # 清理文件
     rm -rf "$RUNDIR" 2>/dev/null
-    
-    echo "清理完成"
 }
 
 start_service() {
-    echo "启动 $NAME 服务..."
-    
-    # 前置检查
+    # 定时任务块永远要写（即使规则服务没启用）
+    sched_write
+
     if ! validate_service; then
-        echo "服务验证失败，跳过启动"
-        return 0  # 返回 0 而不是 1，避免 procd 认为失败
+        log "规则服务: 没有启用规则或 nft 缺失, 跳过 nftables 服务"
+        return 0
     fi
-    
-    # 启动前清理
+
     if ! pre_start_cleanup; then
-        echo "启动前清理失败"
+        log "规则服务: 启动清理失败"
         return 1
     fi
-    
-    # 配置 procd
+
     procd_open_instance
     procd_set_param command "$PROG"
-    
-    # 配置 respawn
     procd_set_param respawn
     procd_set_param respawn_retry 3600
-    
-    # 配置环境变量
     procd_set_param env ZNETCONTROL_DEBUG=0
-    
-    # 配置 PID 文件
     procd_set_param pidfile "$PIDFILE"
-    
-    # 配置标准输出
     procd_set_param stdout 1
     procd_set_param stderr 1
-    
-    # 配置文件变化时触发重载
     procd_set_param file /etc/config/znetcontrol
-    
-    # 配置用户/组
     procd_set_param user root
     procd_set_param group root
-    
     procd_close_instance
-    
-    echo "服务配置完成"
 
-    # ========== 新增：等待2秒让服务启动，然后显示状态 ==========
     sleep 2
-    echo ""
-    echo "服务状态："
-    /usr/bin/znetcontrol status
+    /usr/bin/znetcontrol status 2>/dev/null
 }
 
 stop_service() {
-    echo "停止 $NAME 服务..."
-    
-    # 先尝试优雅停止
     if [ -f "$PIDFILE" ]; then
         local pid
         pid=$(cat "$PIDFILE" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            kill -TERM "$pid" 2>/dev/null
-            sleep 2
-        fi
+        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && { kill -TERM "$pid" 2>/dev/null; sleep 2; }
     fi
-    
-    # 停止后清理
     post_stop_cleanup
-    
-    # 确保进程停止
     pkill -f "znetcontrolctrl" 2>/dev/null
     sleep 1
 }
 
 reload_service() {
-    echo "重新加载配置..."
-    
+    # UCI 变更统一入口: 重写 cron 块 + 重启规则服务
+    sched_write
     if [ -f "$PIDFILE" ]; then
         local pid
         pid=$(cat "$PIDFILE" 2>/dev/null)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            # 通知进程重新加载配置
-            kill -HUP "$pid" 2>/dev/null && echo "已发送重载信号"
-            
-            # 重新初始化防火墙规则
-            /usr/bin/znetcontrol start
+            kill -HUP "$pid" 2>/dev/null
+            /usr/bin/znetcontrol start >/dev/null 2>&1
+            log "reload: 规则服务已重载, 定时任务块已重写"
             return 0
         fi
     fi
-    
-    echo "进程未运行，执行重启..."
-    restart
+    log "reload: 规则进程不在, 重新拉起"
+    start_service
 }
 
 service_triggers() {
     procd_add_reload_trigger "znetcontrol"
 }
 
+# ---------- rc.common 入口 ----------
+start() {
+    start_service
+}
+
+stop() {
+    stop_service
+}
+
+restart() {
+    stop
+    sleep 2
+    start
+}
+
+reload() {
+    reload_service
+}
+
+boot() {
+    start_service
+}
+
+boot_done() {
+    # 兜底: 启动完成后若块缺失, 重写一次
+    if [ -f "$CRON" ] && ! grep -q "^${ZBEGIN}" "$CRON" 2>/dev/null; then
+        local ssum
+        ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
+        local en
+        for i in $(seq 0 $((ssum - 1))); do
+            [ "$i" -ge "$ssum" ] && break
+            en=$(uci -q get "znetcontrol.@stime[${i}].enable" 2>/dev/null)
+            [ "$en" = "1" ] && { log "boot_done: 检测到启用任务但块缺失, 重写"; sched_write; break; }
+        done
+    fi
+}
+
+exit 0

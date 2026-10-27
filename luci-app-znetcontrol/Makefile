@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=2.2.1
-PKG_RELEASE:=20261025
+PKG_VERSION:=2.3.0
+PKG_RELEASE:=20261027
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
 LUCI_TITLE:=佐罗上网管控
@@ -53,6 +53,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/znetcontrol
 	$(INSTALL_DATA) ./luasrc/model/znetcontrol/theme.lua $(1)/usr/lib/lua/luci/model/znetcontrol/
 	$(INSTALL_DATA) ./luasrc/model/cbi/znetcontrol/rules.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
+	$(INSTALL_DATA) ./luasrc/model/cbi/znetcontrol/schedule.lua $(1)/usr/lib/lua/luci/model/cbi/znetcontrol/
 
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/znetcontrol
 	$(INSTALL_DATA) ./luasrc/view/znetcontrol/*.htm $(1)/usr/lib/lua/luci/view/znetcontrol/
@@ -69,6 +70,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./root/usr/bin/znetcontrol $(1)/usr/bin/znetcontrol
 	$(INSTALL_BIN) ./root/usr/bin/znetcontrolctrl $(1)/usr/bin/znetcontrolctrl
+	$(INSTALL_BIN) ./root/usr/bin/znc-schedhandler $(1)/usr/bin/znc-schedhandler
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/znetcontrol $(1)/etc/config/znetcontrol

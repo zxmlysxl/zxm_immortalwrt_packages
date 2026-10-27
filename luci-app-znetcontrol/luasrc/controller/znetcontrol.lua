@@ -83,6 +83,7 @@ function index()
     -- 主菜单项
     entry({"admin", "control", "znetcontrol", "overview"}, call("action_overview"), _("概览"), 10)
     entry({"admin", "control", "znetcontrol", "rules"}, cbi("znetcontrol/rules"), _("管控规则"), 20)
+    entry({"admin", "control", "znetcontrol", "schedule"}, cbi("znetcontrol/schedule"), _("定时任务"), 25)
     entry({"admin", "control", "znetcontrol", "logs"}, template("znetcontrol/logs"), _("系统日志"), 30)
     entry({"admin", "control", "znetcontrol", "devices"}, template("znetcontrol/devices"), _("在线设备"), 40)
     

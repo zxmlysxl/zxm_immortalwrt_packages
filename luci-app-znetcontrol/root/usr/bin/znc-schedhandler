@@ -1,0 +1,98 @@
+#!/bin/sh
+# ZNetControl 定时任务执行器
+# 用法: znc-schedhandler <任务类型> "任务名"
+# 任务类型: reboot|poweroff|network|restartwan|closewan|clearmem|upwifi|downwifi|customscript|opkgupgrade
+# 日志: /etc/taskplan/znc-sched.log（自带 500 行自清理）
+
+LOG=/etc/taskplan/znc-sched.log
+DLOG=/etc/taskplan/znc-sched-debug.log
+TASK=${2:-定时任务}
+
+mkdir -p /etc/taskplan 2>/dev/null
+
+log() {
+    echo "$(date +'%Y-%m-%d %H:%M:%S') [ZNC-SCHED] $*" >> "$LOG"
+}
+
+dbg() {
+    echo "$(date +'%Y-%m-%d %H:%M:%S') $*" >> "$DLOG"
+}
+
+# 日志自清理（各保留 500 行）
+for f in "$LOG" "$DLOG"; do
+    [ -f "$f" ] || continue
+    c=$(grep -c "" "$f" 2>/dev/null || echo 0)
+    [ "$c" -gt 500 ] && sed -i "1,$((c - 500))d" "$f" 2>/dev/null
+done
+
+case "$1" in
+    reboot)
+        log "[$TASK] 定时重启系统"
+        sleep 2
+        /sbin/reboot
+        ;;
+    poweroff)
+        log "[$TASK] 定时关机"
+        sleep 2
+        /sbin/poweroff
+        ;;
+    network)
+        log "[$TASK] 定时重启网络"
+        /etc/init.d/network restart
+        log "[$TASK] 网络重启完成"
+        ;;
+    restartwan)
+        log "[$TASK] 定时重拨 WAN"
+        ifdown wan 2>/dev/null
+        sleep 3
+        ifup wan
+        log "[$TASK] WAN 重拨完成"
+        ;;
+    closewan)
+        log "[$TASK] 定时关闭 WAN"
+        ifdown wan 2>/dev/null
+        ;;
+    clearmem)
+        log "[$TASK] 定时清理内存缓存"
+        sync
+        echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+        log "[$TASK] 内存缓存清理完成"
+        ;;
+    upwifi)
+        log "[$TASK] 定时开启 WiFi"
+        uci set wireless.radio0.disabled=0 2>/dev/null
+        uci set wireless.radio1.disabled=0 2>/dev/null
+        uci commit wireless 2>/dev/null
+        wifi up 2>/dev/null
+        log "[$TASK] WiFi 已开启"
+        ;;
+    downwifi)
+        log "[$TASK] 定时关闭 WiFi"
+        uci set wireless.radio0.disabled=1 2>/dev/null
+        uci set wireless.radio1.disabled=1 2>/dev/null
+        uci commit wireless 2>/dev/null
+        wifi down 2>/dev/null
+        log "[$TASK] WiFi 已关闭"
+        ;;
+    customscript)
+        S=/etc/taskplan/znc-custom-script
+        if [ -s "$S" ]; then
+            log "[$TASK] 执行自定义脚本"
+            sh "$S" >> "$DLOG" 2>&1
+            log "[$TASK] 自定义脚本执行完成（详见 znc-sched-debug.log）"
+        else
+            log "[$TASK] 自定义脚本为空，跳过"
+        fi
+        ;;
+    opkgupgrade)
+        log "[$TASK] 定时升级全部软件包"
+        opkg update >> "$DLOG" 2>&1
+        opkg upgrade -force-override-provides -force-overwrite -force-doesntexist >> "$DLOG" 2>&1
+        log "[$TASK] 软件包升级完成（详见 znc-sched-debug.log）"
+        ;;
+    *)
+        log "[$TASK] 未知任务类型: $1"
+        dbg "[$TASK] unknown task type: $1"
+        ;;
+esac
+exit 0
