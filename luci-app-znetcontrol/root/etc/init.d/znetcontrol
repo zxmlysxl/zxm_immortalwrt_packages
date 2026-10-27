@@ -54,6 +54,7 @@ cron_reload() {
     # 官方 cron init 没有 reload 动作, rc.common 会把 reload 退化成 start,
     # 而 procd 的 set 不保证真重启 crond -> 用 restart 强制全量重读
     # (restart = stop+start, crond 启动时 rescan_crontab_dir() 重新载入所有 crontab)
+    /etc/init.d/cron restart >/dev/null 2>&1
     # crond 没在跑就拉起来
     if ! crond_running; then
         /etc/init.d/cron enable >/dev/null 2>&1
