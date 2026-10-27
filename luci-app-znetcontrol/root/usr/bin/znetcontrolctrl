@@ -1,12 +1,12 @@
-#!/bin/bash
+#!/bin/sh
 
 NAME=znetcontrol
 IDLIST="/var/run/$NAME.idlist"
 TMPID="/var/run/$NAME.tmpid"
 
 get_rule_name() {
-    local id=$1
-    local name=$(uci -q get znetcontrol.@device[$id].name)
+    id=$1
+    name=$(uci -q get znetcontrol.@device[$id].name)
     if [ -z "$name" ] || [ "$name" = "新规则" ]; then
         name=$(uci -q get znetcontrol.@device[$id].target)
         if [ -z "$name" ]; then
@@ -17,12 +17,12 @@ get_rule_name() {
 }
 
 get_enabled_rule_ids() {
-    local rule_ids=""
-    local index=0
+    rule_ids=""
+    index=0
     
     while true; do
-        local enable_val=$(uci -q get "znetcontrol.@device[$index].enable")
-        local target_val=$(uci -q get "znetcontrol.@device[$index].target")
+    enable_val=$(uci -q get "znetcontrol.@device[$index].enable")
+    target_val=$(uci -q get "znetcontrol.@device[$index].target")
         
         if [ -z "$enable_val" ] && [ -z "$target_val" ]; then
             break
@@ -39,37 +39,37 @@ get_enabled_rule_ids() {
 }
 
 config_t_get() {
-    local section=$1
-    local option=$2
-    local index=${3:-0}
+    section=$1
+    option=$2
+    index=$3
     
-    local value=$(uci -q get "znetcontrol.@${section}[${index}].${option}")
+    value=$(uci -q get "znetcontrol.@${section}[${index}].${option}")
     echo "$value"
 }
 
 # 使用数值计算的时间判断函数
 is_time_in_range() {
-    local start_time=$1
-    local end_time=$2
+    start_time=$1
+    end_time=$2
     
     # 处理空值
     start_time=${start_time:-00:00}
     end_time=${end_time:-23:59}
     
     # 获取当前时间
-    local current_hour=$(date +%H)
-    local current_minute=$(date +%M)
-    local current_total=$((10#$current_hour * 60 + 10#$current_minute))
+    current_hour=$(date +%H)
+    current_minute=$(date +%M)
+    current_total=$(($current_hour * 60 + $current_minute))
     
     # 转换开始时间
-    local start_hour=${start_time%:*}
-    local start_minute=${start_time#*:}
-    local start_total=$((10#$start_hour * 60 + 10#$start_minute))
+    start_hour=${start_time%:*}
+    start_minute=${start_time#*:}
+    start_total=$(($start_hour * 60 + $start_minute))
     
     # 转换结束时间
-    local end_hour=${end_time%:*}
-    local end_minute=${end_time#*:}
-    local end_total=$((10#$end_hour * 60 + 10#$end_minute))
+    end_hour=${end_time%:*}
+    end_minute=${end_time#*:}
+    end_total=$(($end_hour * 60 + $end_minute))
     
     # 如果是全天
     if [ "$start_time" = "$end_time" ]; then
@@ -87,15 +87,15 @@ is_time_in_range() {
 }
 
 is_weekday_in_range() {
-    local configured_weekdays=$1
-    local current_weekday=$(date +%u)  # 1=星期一, 7=星期日
+    configured_weekdays=$1
+    current_weekday=$(date +%u)  # 1=星期一, 7=星期日
     
     # 如果配置为"0"，表示每天
     [ "$configured_weekdays" = "0" ] && return 0
     [ -z "$configured_weekdays" ] && return 0
     
     # 把逗号替换成空格，逐项处理
-    local parts=$(echo "$configured_weekdays" | tr ',' ' ')
+    parts=$(echo "$configured_weekdays" | tr ',' ' ')
     
     for part in $parts; do
         part=$(echo "$part" | tr -d ' ')
@@ -103,8 +103,8 @@ is_weekday_in_range() {
         
         # 范围格式：1-5
         if echo "$part" | grep -qE '^[0-9]+-[0-9]+$'; then
-            local start=$(echo "$part" | cut -d'-' -f1)
-            local end=$(echo "$part" | cut -d'-' -f2)
+    start=$(echo "$part" | cut -d'-' -f1)
+    end=$(echo "$part" | cut -d'-' -f2)
             if [ -n "$start" ] && [ -n "$end" ] && \
                [ "$start" -ge 1 ] && [ "$end" -le 7 ] && [ "$start" -le "$end" ]; then
                 if [ "$current_weekday" -ge "$start" ] && [ "$current_weekday" -le "$end" ]; then
@@ -123,11 +123,11 @@ is_weekday_in_range() {
 }
 
 check_device() {
-    local id=$1
-    local start_time=$(config_t_get device timestart $id)
-    local end_time=$(config_t_get device timeend $id)
-    local weekdays=$(config_t_get device week $id)
-    local enable_val=$(config_t_get device enable $id)
+    id=$1
+    start_time=$(config_t_get device timestart $id)
+    end_time=$(config_t_get device timeend $id)
+    weekdays=$(config_t_get device week $id)
+    enable_val=$(config_t_get device enable $id)
     
     # 检查是否启用
     [ "$enable_val" != "1" ] && return 1
@@ -137,10 +137,10 @@ check_device() {
 }
 
 update_device_status() {
-    local id=$1
-    local action=$2
+    id=$1
+    action=$2
     
-    local rule_name=$(get_rule_name $id)
+    rule_name=$(get_rule_name $id)
     
     if [ "$action" = "add" ]; then
         znetcontrol add $id
@@ -159,10 +159,10 @@ process_devices() {
     log "开始检查设备规则..."
     
     # 获取当前启用的规则ID
-    local enabled_ids=$(get_enabled_rule_ids)
+    enabled_ids=$(get_enabled_rule_ids)
     
     for id in $enabled_ids; do
-        local rule_name=$(get_rule_name $id)
+    rule_name=$(get_rule_name $id)
         
         if check_device $id; then
             log "【$rule_name】在生效时间内"
@@ -187,7 +187,7 @@ process_devices() {
 }
 
 log() {
-    local d="$(date '+%Y-%m-%d %H:%M:%S')"
+    d="$(date '+%Y-%m-%d %H:%M:%S')"
     echo "[$d] INFO: $@" >>/var/log/znetcontrol.log
 }
 
