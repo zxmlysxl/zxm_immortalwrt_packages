@@ -64,121 +64,33 @@ e.default = "network"
 
 -- cron 5 段校验：支持 * / N / N-M / */N / N,S,T / N-M/S，按段范围限制
 -- 返回错误信息字符串，nil 表示通过
-local function check_cronfield(val, min, max, is_week)
-    val = val or ""
+local function check_cronfield(val, min, max)
+    val = (val or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if val == "" then return "空值" end
     if val == "*" then return nil end
-    -- 逗号分隔多段
-    local parts = {}
-    for seg in val:gmatch("[^,]+") do
-        parts[#parts+1] = seg
-    end
-    if #parts == 0 then return "空值" end
-    for _, seg in ipairs(parts) do
-        local ok, errmsg
-        if seg:find("^%d+%-%d+$", 1, true) then
+    local function check_seg(seg)
+        if seg:match("^%d+%-%d+$") then
             local a, b = seg:match("^(%d+)%-(%d+)$")
             a, b = tonumber(a), tonumber(b)
-            if not a or not b then ok = false; errmsg = "范围格式错误:"..seg
-            elseif a > b then ok = false; errmsg = "范围起大于止:"..seg
-            elseif a < min or b > max then ok = false; errmsg = "超出范围("..min.."-"..max.."):"..seg end
-        elseif seg:find("^%d+$", 1, true) then
+            if not a or not b then return "范围格式错误:"..seg
+            elseif a > b then return "范围起大于止:"..seg
+            elseif a < min or b > max then return "超出范围("..tostring(min).."-"..tostring(max).."):"..seg end
+        elseif seg:match("^%d+$") then
             local n = tonumber(seg)
-            if n < min or n > max then ok = false; errmsg = "超出范围("..min.."-"..max.."):"..seg else ok = true end
-        elseif seg:find("^%*%/%d+$", 1, true) or seg:find("^%d+%-%d+/%d+$", 1, true) then
+            if n < min or n > max then return "超出范围("..tostring(min).."-"..tostring(max).."):"..seg end
+        elseif seg:match("^%*/%d+$") or seg:match("^%d+%-%d+/%d+$") then
             local step = tonumber(seg:match("%d+$"))
-            local rng = seg:match("^(.*)/")
-            if step < 1 then ok = false; errmsg = "步进须>=1:"..seg
-            elseif rng == "*" then
-                ok = true
-            elseif rng:find("^%d+%-%d+$", 1, true) then
-                local a, b = rng:match("^(%d+)%-(%d+)$")
-                a, b = tonumber(a), tonumber(b)
-                if not a or not b or a > b or a < min or b > max then ok = false; errmsg = "范围/步进格式错误:"..seg else ok = true end
-            else
-                ok = false; errmsg = "步进前须为 * 或 N-M:"..seg
-            end
-        elseif seg:find("^%d+,%d+$", 1, true) or seg:find("^%d+$", 1, true) == nil then
-            ok = false; errmsg = "无法识别的格式:"..seg
+            if not step or step < 1 then return "步进须>=1:"..seg end
         else
-            ok = true
+            return "无法识别的格式:"..seg
         end
-        if not ok then
-            local label = is_week and "周" or ""
-            return errmsg
-        end
+        return nil
+    end
+    for seg in val:gmatch("[^,]+") do
+        local err = check_seg(seg)
+        if err then return err end
     end
     return nil
-end
-
-local function validate_stime_entry(sec)
-    local minute = sec:get("minute")
-    local hour = sec:get("hour")
-    local month = sec:get("month")
-    local week = sec:get("week")
-    local err
-    err = check_cronfield(minute, 0, 59, false)
-        or check_cronfield(hour, 0, 23, false)
-        or check_cronfield(month, 1, 12, false)
-        or check_cronfield(week, 0, 7, true)
-    if err then
-        return ("时间字段非法（%s）：%s"):format(err, (minute or "") .. " " .. (hour or "") .. " " .. (month or "") .. " " .. (week or ""))
-    end
-    return nil
-end
-
-e = s:option(Value, "minute", translate("分 (0-59)"),
-    "支持 0-59 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
-e.rmempty = false
-e.default = "0"
-e.validate = function(self, value, sec, s)
-    local err = check_cronfield(value, 0, 59, false)
-    if err then
-        return nil, translate("分 字段非法（%s），请检查取值是否在 0-59 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
-    end
-    return value
-end
-
-e = s:option(Value, "hour", translate("时 (0-23)"),
-    "支持 0-23 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
-e.rmempty = false
-e.default = "0"
-e.validate = function(self, value, sec, s)
-    local err = check_cronfield(value, 0, 23, false)
-    if err then
-        return nil, translate("时 字段非法（%s），请检查取值是否在 0-23 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
-    end
-    return value
-end
-
-e = s:option(Value, "month", translate("月 (1-12 / *)"),
-    "1-12 或 *，支持 N-M 与 */N。保存时校验，非法值不能保存。")
-e.default = "*"
-e.rmempty = false
-e.validate = function(self, value, sec, s)
-    local err = check_cronfield(value, 1, 12, false)
-    if err then
-        return nil, translate("月 字段非法（%s），请检查取值是否在 1-12 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
-    end
-    return value
-end
-
-e = s:option(Value, "week", translate("周 (0=每天 / 1-7)"),
-    "0=每天；1=周一 ... 7=周日；支持 1-5、1,3,5、*。保存时校验，非法值不能保存。")
-e.default = "0"
-e.rmempty = false
-e.validate = function(self, value, sec, s)
-    local err = check_cronfield(value, 0, 7, true)
-    if err then
-        return nil, translate("周 字段非法（%s），0=每天，1-7 对应周一~周日，支持 * / N / N-M / N,M / */N 的合法格式"):format(err)
-    end
-    return value
-end
-
-m.apply_on_parse = true
-m.on_after_apply = function(self, map)
-    -- UCI 已 commit；通过 ucitrack 触发 /etc/init.d/znetcontrol reload，
-    -- 它会重写 /etc/crontabs/root 的标记块并 cron reload，无需手动操作。
-    sys.call("/etc/init.d/znetcontrol reload >/dev/null 2>&1")
 end
 
 return m
