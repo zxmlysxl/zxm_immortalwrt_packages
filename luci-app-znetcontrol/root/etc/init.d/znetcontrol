@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# ZNetControl init.d
+# ZNetControl init.d  (纯 ash 兼容, 无 bashism, 结尾无 exit 0)
 # 同时管理:
 #   1) nftables 管控规则服务（znetcontrolctrl 30s watch loop）
 #   2) 定时任务（/etc/crontabs/root 内标记块 #znc-sched-begin .. #znc-sched-end）
@@ -8,7 +8,8 @@
 #   - cron 行写入 /etc/crontabs/root 持久文件, 重启不丢
 #   - uci commit 后由 ucitrack 触发 reload, 自动重生成 cron 块
 #   - boot 时兜底重生成一次
-#   - 标记块用 sed 精确定位, 不影响用户其它 crontab 行
+#   - 标记块用 awk 精确定位, 不影响用户其它 crontab 行
+#   - 写完后必须显式让 crond 重读（见 cron_reload）
 
 START=99
 STOP=10
@@ -19,7 +20,9 @@ PROG=/usr/bin/znetcontrolctrl
 PIDFILE="/var/run/${NAME}.pid"
 LOGFILE="/var/log/${NAME}.log"
 RUNDIR="/var/run/znetcontrol"
-CRON=/etc/crontabs/root
+CRONDIR=/etc/crontabs
+CRON="$CRONDIR/root"
+CRONUSER=root
 ZBEGIN="#znc-sched-begin"
 ZEND="#znc-sched-end"
 
@@ -27,11 +30,41 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $@" >> "$LOGFILE"
 }
 
+# ---------- crond 进程是否在跑 ----------
+crond_running() {
+    if command -v pidof >/dev/null 2>&1; then
+        pidof crond >/dev/null 2>&1 && return 0
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep crond >/dev/null 2>&1 && return 0
+    fi
+    for p in /proc/[0-9]*; do
+        [ -r "$p/comm" ] || continue
+        c=$(cat "$p/comm" 2>/dev/null)
+        [ "$c" = "crond" ] && return 0
+    done
+    return 1
+}
+
+# ---------- 让 crond 立刻重读 crontab ----------
+cron_reload() {
+    # busybox crond 官方重载钩子: 在 crontab 目录写 cron.update（内容=用户名）
+    # crond 每分钟检查一次, 命中后立刻重新载入该用户的 crontab
+    echo "$CRONUSER" > "$CRONDIR/cron.update" 2>/dev/null
+    # OpenWrt 官方方式（部分固件的 cron init 没有 reload 动作, 会退化为 start）
+    /etc/init.d/cron reload >/dev/null 2>&1
+    # crond 没在跑就拉起来
+    if ! crond_running; then
+        /etc/init.d/cron start >/dev/null 2>&1
+        log "cron: crond 未运行, 已尝试启动 /etc/init.d/cron"
+    fi
+}
+
 # ---------- 定时任务 cron 块生成 ----------
 sched_write() {
     [ -d /etc/taskplan ] || mkdir -p /etc/taskplan
-    [ -f "$CRON" ] || echo "" > "$CRON"
-    chmod 755 "$CRON" 2>/dev/null
+    [ -d "$CRONDIR" ] || mkdir -p "$CRONDIR"
+    [ -f "$CRON" ] || : > "$CRON"
 
     # 自定义脚本从 UCI 落地
     if [ "$(uci -q get znetcontrol.settings.customscript | wc -l)" -gt 0 ] 2>/dev/null; then
@@ -40,12 +73,16 @@ sched_write() {
         chmod 755 /etc/taskplan/znc-custom-script 2>/dev/null
     fi
 
-    # 先删旧块（无论之前有没有）
-    sed -i "/^${ZBEGIN}$/,/^${ZEND}$/d" "$CRON" 2>/dev/null
+    # 先摘掉旧块（awk 原地重定向, 保留用户自己的其它 crontab 行）
+    awk -v b="$ZBEGIN" -v e="$ZEND" '
+        $0 == b { skip = 1; next }
+        $0 == e { skip = 0; next }
+        skip != 1 { print }
+    ' "$CRON" > "/tmp/znc-cron.tmp" 2>/dev/null
 
     # 收集启用的 stime 任务, 一次性写标记块
     {
-        echo "${ZBEGIN}"
+        echo "$ZBEGIN"
         ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
         [ "$ssum" -gt 0 ] 2>/dev/null || ssum=0
         for i in $(seq 0 $((ssum - 1))); do
@@ -61,19 +98,29 @@ sched_write() {
             styp=$(uci -q get "znetcontrol.@stime[${i}].stype" 2>/dev/null); [ -n "$styp" ] || styp="network"
             rmark=$(uci -q get "znetcontrol.@stime[${i}].remarks" 2>/dev/null)
             [ -n "$rmark" ] || rmark="task${i}"
-            # 备注可能含空格, 用双引号保护, 作为 handler 的第二个参数
+            # 备注里的 # 会被 cron 当成注释起点, 双引号会破坏命令, 一律剔除
+            rmark=$(printf '%s' "$rmark" | sed 's/[#"\]//g')
+            [ -n "$rmark" ] || rmark="task${i}"
             echo "${mt} ${hr} * ${mo} ${wk} /usr/bin/znc-schedhandler ${styp} \"${rmark}\""
         done
-        echo "${ZEND}"
-    } >> "$CRON"
+        echo "$ZEND"
+    } >> "/tmp/znc-cron.tmp"
 
-    /etc/init.d/cron reload >/dev/null 2>&1
-    log "sched_write: 重生成定时任务块, 启用任务数=$(grep -c 'znc-schedhandler' "$CRON" 2>/dev/null || echo 0)"
+    # 原地覆盖: 保留 inode, 只有 mtime 变化
+    # （用 sed -i 换 inode 会让 procd 的 file 监视失效, crond 就再也读不到新内容）
+    cat "/tmp/znc-cron.tmp" > "$CRON" 2>/dev/null
+    rm -f "/tmp/znc-cron.tmp" 2>/dev/null
+
+    # crontab 必须是 root 属主且不可被 group/other 写, 否则 cron 会拒绝加载
+    chown root:root "$CRON" 2>/dev/null
+    chmod 600 "$CRON" 2>/dev/null
+
+    cron_reload
+    log "sched_write: 重生成定时任务块, 启用任务数=$(grep -c 'znc-schedhandler' "$CRON" 2>/dev/null || echo 0), crond运行中=$(crond_running && echo 是 || echo 否)"
 }
 
 # ---------- nftables 规则服务 ----------
 validate_service() {
-    local enabled_count
     enabled_count=$(uci show znetcontrol 2>/dev/null | grep -c '\.enable="1"' 2>/dev/null || echo 0)
     enabled_count=$(echo "$enabled_count" | grep -E '^[0-9]+$' || echo 0)
     if [ "$enabled_count" -eq 0 ] 2>/dev/null; then
@@ -84,11 +131,9 @@ validate_service() {
 }
 
 pre_start_cleanup() {
-    local tables
     tables=$(nft list tables 2>/dev/null | awk '{print $2}' 2>/dev/null)
-    local table
-    for table in $tables; do
-        echo "$table" | grep -q "znetcontrol" && nft delete table "$table" 2>/dev/null || true
+    for t in $tables; do
+        echo "$t" | grep -q "znetcontrol" && nft delete table "$t" 2>/dev/null || true
     done
     rm -rf "$RUNDIR" 2>/dev/null
     mkdir -p "$RUNDIR"
@@ -96,15 +141,14 @@ pre_start_cleanup() {
         return 0
     fi
     cat /tmp/znetcontrol_start.log 2>/dev/null || true
+    log "pre_start_cleanup: /usr/bin/znetcontrol start 失败, 详见 /tmp/znetcontrol_start.log"
     return 1
 }
 
 post_stop_cleanup() {
-    local tables
     tables=$(nft list tables 2>/dev/null | awk '{print $2}' 2>/dev/null)
-    local table
-    for table in $tables; do
-        echo "$table" | grep -q "znetcontrol" && nft delete table "$table" 2>/dev/null || true
+    for t in $tables; do
+        echo "$t" | grep -q "znetcontrol" && nft delete table "$t" 2>/dev/null || true
     done
     rm -rf "$RUNDIR" 2>/dev/null
 }
@@ -142,7 +186,6 @@ start_service() {
 
 stop_service() {
     if [ -f "$PIDFILE" ]; then
-        local pid
         pid=$(cat "$PIDFILE" 2>/dev/null)
         [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && { kill -TERM "$pid" 2>/dev/null; sleep 2; }
     fi
@@ -198,10 +241,8 @@ boot() {
 boot_done() {
     # 兜底: 启动完成后若块缺失, 重写一次
     if [ -f "$CRON" ] && ! grep -q "^${ZBEGIN}" "$CRON" 2>/dev/null; then
-        local ssum
         ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
         [ "$ssum" -gt 0 ] 2>/dev/null || ssum=0
-        local en
         for i in $(seq 0 $((ssum - 1))); do
             [ "$i" -ge "$ssum" ] && break
             en=$(uci -q get "znetcontrol.@stime[${i}].enable" 2>/dev/null)

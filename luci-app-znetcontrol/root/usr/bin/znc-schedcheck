@@ -1,0 +1,93 @@
+#!/bin/sh
+# znetcontrol 定时任务诊断脚本
+# 用法: znc-schedcheck
+
+CRON=/etc/crontabs/root
+ZBEGIN="#znc-sched-begin"
+
+echo "===== 1. crontab 标记块 ====="
+if [ -f "$CRON" ]; then
+    ls -l "$CRON"
+    if grep -q "^${ZBEGIN}" "$CRON" 2>/dev/null; then
+        sed -n "/^${ZBEGIN}$/,/^#znc-sched-end$/p" "$CRON"
+        echo "--- 块内任务行数: $(grep -c znc-schedhandler "$CRON" 2>/dev/null) ---"
+    else
+        echo "[!] 没有找到 $ZBEGIN 标记块"
+    fi
+else
+    echo "[!] $CRON 不存在"
+fi
+
+echo
+echo "===== 2. crond 进程 ====="
+if pidof crond >/dev/null 2>&1; then
+    echo "crond 运行中, pid=$(pidof crond)"
+elif pgrep crond >/dev/null 2>&1; then
+    echo "crond 运行中, pid=$(pgrep crond | tr "\n" " ")"
+else
+    echo "[!] crond 没在运行 —— 定时任务不会被触发"
+    echo "    修复: /etc/init.d/cron start && /etc/init.d/cron enable"
+fi
+
+echo
+echo "===== 3. cron 服务自启动 ====="
+if [ -x /etc/init.d/cron ]; then
+    if /etc/init.d/cron enabled >/dev/null 2>&1; then
+        echo "cron 服务已启用（开机自启）"
+    else
+        echo "[!] cron 服务未启用，重启后定时任务会失效"
+        echo "    修复: /etc/init.d/cron enable"
+    fi
+else
+    echo "[!] 找不到 /etc/init.d/cron（cron 服务未安装）"
+fi
+
+echo
+echo "===== 4. 执行器与脚本权限 ====="
+for f in /usr/bin/znc-schedhandler /usr/bin/znetcontrol /usr/bin/znetcontrolctrl /etc/init.d/znetcontrol; do
+    if [ -e "$f" ]; then
+        printf "%s: %s\n" "$f" "$(ls -l "$f" | cut -d" " -f1)"
+    else
+        echo "[!] 缺失: $f"
+    fi
+done
+
+echo
+echo "===== 5. 最近执行日志 ====="
+if [ -f /etc/taskplan/znc-sched.log ]; then
+    echo "--- /etc/taskplan/znc-sched.log (末尾 10 行) ---"
+    tail -n 10 /etc/taskplan/znc-sched.log
+else
+    echo "(没有 /etc/taskplan/znc-sched.log —— 说明执行器一次都没被触发过)"
+fi
+
+echo
+echo "===== 6. 服务日志 ====="
+if [ -f /var/log/znetcontrol.log ]; then
+    tail -n 8 /var/log/znetcontrol.log
+fi
+
+echo
+echo "===== 7. UCI 里的任务 ====="
+i=0
+ssum=$(grep -c "config stime" /etc/config/znetcontrol 2>/dev/null || echo 0)
+while [ "$i" -lt "$ssum" ]; do
+    en=$(uci -q get "znetcontrol.@stime[$i].enable")
+    mt=$(uci -q get "znetcontrol.@stime[$i].minute")
+    hr=$(uci -q get "znetcontrol.@stime[$i].hour")
+    mo=$(uci -q get "znetcontrol.@stime[$i].month")
+    wk=$(uci -q get "znetcontrol.@stime[$i].week")
+    tp=$(uci -q get "znetcontrol.@stime[$i].stype")
+    rm=$(uci -q get "znetcontrol.@stime[$i].remarks")
+    echo "任务[$i] 启用=$en 分=$mt 时=$hr 月=$mo 周=$wk 类型=$tp 备注=$rm"
+    i=$((i + 1))
+done
+
+echo
+echo "===== 8. 手动触发一次（验证执行器本身） ====="
+echo "执行: /usr/bin/znc-schedhandler clearmem \"诊断测试\"（只清缓存，不重启）"
+/usr/bin/znc-schedhandler clearmem "诊断测试" 2>&1 | head -3
+if [ -f /etc/taskplan/znc-sched.log ]; then
+    tail -n 3 /etc/taskplan/znc-sched.log
+fi
+exit 0
