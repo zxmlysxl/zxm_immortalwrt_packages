@@ -4,6 +4,9 @@
 # 任务类型: reboot|poweroff|network|restartwan|closewan|clearmem|upwifi|downwifi|customscript|opkgupgrade
 # 日志: /etc/taskplan/znc-sched.log（自带 500 行自清理）
 
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 LOG=/etc/taskplan/znc-sched.log
 DLOG=/etc/taskplan/znc-sched-debug.log
 TASK=${2:-定时任务}

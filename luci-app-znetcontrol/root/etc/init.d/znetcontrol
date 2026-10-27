@@ -55,8 +55,16 @@ cron_reload() {
     /etc/init.d/cron reload >/dev/null 2>&1
     # crond 没在跑就拉起来
     if ! crond_running; then
+        /etc/init.d/cron enable >/dev/null 2>&1
         /etc/init.d/cron start >/dev/null 2>&1
-        log "cron: crond 未运行, 已尝试启动 /etc/init.d/cron"
+        log "cron: crond 未运行, 已 enable+start /etc/init.d/cron"
+    fi
+    # 开机自启: 否则重启后 crond 不在, 定时任务永远不触发
+    /etc/init.d/cron enable >/dev/null 2>&1
+    if crond_running; then
+        log "cron: crond 运行中"
+    else
+        log "cron: 警告 crond 仍未运行, 定时任务不会触发, 请检查 /etc/init.d/cron"
     fi
 }
 
