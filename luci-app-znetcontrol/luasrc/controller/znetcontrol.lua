@@ -752,6 +752,11 @@ function action_logs()
     
     local logs = {}
     local logfile = "/var/log/znetcontrol.log"
+    -- source=sched 时改读定时任务日志
+    local source = http.formvalue("source") or ""
+    if source == "sched" then
+        logfile = "/etc/taskplan/znc-sched.log"
+    end
     
     if not nixio.fs.access(logfile) then
         sys.call("mkdir -p /var/log 2>/dev/null")

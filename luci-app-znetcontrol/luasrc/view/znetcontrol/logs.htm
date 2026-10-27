@@ -80,6 +80,7 @@ if (document.readyState === 'loading') {
                                 <option value="warn">仅警告</option>
                                 <option value="error">仅错误</option>
                                 <option value="rule">仅规则相关</option>
+                                <option value="sched">仅定时任务</option>
                             </select>
                             
                             <span style="font-size: 12px;">显示:</span>
@@ -449,7 +450,11 @@ function refreshLogs() {
     // 显示加载状态
     logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096));">正在加载日志...</div>';
     
-    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_logs")%>')
+    const logSel = document.getElementById("log-level");
+    const wantSched = logSel && logSel.value === "sched";
+    const logUrl = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_logs")%>'
+        + (wantSched ? "?source=sched" : "");
+    fetch(logUrl)
         .then(response => {
             if (!response.ok) {
                 throw new Error('HTTP错误: ' + response.status);
@@ -524,6 +529,8 @@ function filterByLevel(logs, level) {
                 return log.includes('⚠');
             case 'error':
                 return log.includes('❌');
+            case 'sched':
+                return log.includes('ZNC-SCHED') || log.includes('RUN type=');
             case 'rule':
                 return log.includes('解析规则') || 
                        log.includes('成功添加') || 
@@ -541,7 +548,8 @@ function filterByLevel(logs, level) {
 function filterLogs() {
     const level = document.getElementById('log-level').value;
     
-    if (level === 'all') {
+    // 'all' 与 'sched' 都需要从服务端重新取(数据源不同), 其余只在前端过滤
+    if (level === 'all' || level === 'sched') {
         refreshLogs();
         return;
     }
@@ -598,6 +606,24 @@ function formatLogLine(log) {
         return '<span style="color: var(--znc-log-stat, #0f766e)); font-weight: bold;">' + escapeHtml(log) + '</span>';
     }
     
+    // 定时任务日志: 2026-10-27 21:06:40 [ZNC-SCHED] xxx
+    const schedMatch = log.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*\[ZNC-SCHED\]\s*(.*)$/);
+    if (schedMatch) {
+        const sTs = schedMatch[1];
+        const sMsg = schedMatch[2] || '';
+        let sColor = 'var(--znc-log-info, #2563eb)';
+
+        if (sMsg.indexOf('完成') >= 0) sColor = 'var(--znc-log-ok, #155724)';
+
+        else if (sMsg.indexOf('RUN type=') >= 0) sColor = 'var(--znc-log-stat, #0f766e)';
+
+        else if (sMsg.indexOf('未知') >= 0 || sMsg.indexOf('失败') >= 0) sColor = 'var(--znc-danger-text, #721c24)';
+
+        return '<span style="color: var(--znc-log-ts, #1e40af);">' + escapeHtml(sTs) + '</span> ' +
+               '<span style="color:' + sColor + ';">[定时] ' + escapeHtml(sMsg) + '</span>';
+
+    }
+
     // 处理带时间戳的日志
     const timestampMatch = log.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?: - (.*))?$/);
     if (timestampMatch) {
