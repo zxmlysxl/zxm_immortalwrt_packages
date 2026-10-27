@@ -8,7 +8,7 @@ m = Map("znetcontrol", translate("定时任务"),
     translate("按计划自动执行系统维护任务（重启/关机/重拨/清内存/自定义脚本等）") ..
     translate("<br><b style='color:#6f42c1;'>比传统 taskplan 更可靠：</b>任务持久保存在 /etc/config/znetcontrol，") ..
     translate("实际执行行写入 /etc/crontabs/root 标记块（#znc-sched-begin/end），重启不丢，保存即生效。") ..
-    translate("<br><b style='color:#28a745;'>时间格式：</b>分 时 日 月 周（cron 5 段），支持 * 通配、N 数字、N-M 范围、*/N 步进。") ..
+    translate("<br><b style='color:#28a745;'>时间从左到右依次是：</b>分 → 时 → 日 → 月 → 周（cron 顺序，支持 * 通配、N 数字、N-M 范围、*/N 步进）。") ..
     translate("<br><b style='color:#dc3545;'>星期 0=每天，1-7 对应周一~周日，支持 1-5、1,3,5、*。</b>") ..
     "<style>:root{--znc-danger-text:#dc3545;--znc-primary-text:#007bff;--znc-success-text:#28a745;--znc-warn-text:#6f42c1;}html[data-zncolor=dark]{--znc-danger-text:#ff8a95;--znc-primary-text:#4dabf7;--znc-success-text:#4fd67a;--znc-warn-text:#ffd75e;}</style>")
 
@@ -62,25 +62,117 @@ e:value("customscript", translate("定时执行自定义脚本"))
 e:value("opkgupgrade",  translate("定时升级全部软件包"))
 e.default = "network"
 
+-- cron 5 段校验：支持 * / N / N-M / */N / N,S,T / N-M/S，按段范围限制
+-- 返回错误信息字符串，nil 表示通过
+local function check_cronfield(val, min, max, is_week)
+    val = val or ""
+    if val == "*" then return nil end
+    -- 逗号分隔多段
+    local parts = {}
+    for seg in val:gmatch("[^,]+") do
+        parts[#parts+1] = seg
+    end
+    if #parts == 0 then return "空值" end
+    for _, seg in ipairs(parts) do
+        local ok, errmsg
+        if seg:find("^%d+%-%d+$", 1, true) then
+            local a, b = seg:match("^(%d+)%-(%d+)$")
+            a, b = tonumber(a), tonumber(b)
+            if not a or not b then ok = false; errmsg = "范围格式错误:"..seg
+            elseif a > b then ok = false; errmsg = "范围起大于止:"..seg
+            elseif a < min or b > max then ok = false; errmsg = "超出范围("..min.."-"..max.."):"..seg end
+        elseif seg:find("^%d+$", 1, true) then
+            local n = tonumber(seg)
+            if n < min or n > max then ok = false; errmsg = "超出范围("..min.."-"..max.."):"..seg else ok = true end
+        elseif seg:find("^%*%/%d+$", 1, true) or seg:find("^%d+%-%d+/%d+$", 1, true) then
+            local step = tonumber(seg:match("%d+$"))
+            local rng = seg:match("^(.*)/")
+            if step < 1 then ok = false; errmsg = "步进须>=1:"..seg
+            elseif rng == "*" then
+                ok = true
+            elseif rng:find("^%d+%-%d+$", 1, true) then
+                local a, b = rng:match("^(%d+)%-(%d+)$")
+                a, b = tonumber(a), tonumber(b)
+                if not a or not b or a > b or a < min or b > max then ok = false; errmsg = "范围/步进格式错误:"..seg else ok = true end
+            else
+                ok = false; errmsg = "步进前须为 * 或 N-M:"..seg
+            end
+        elseif seg:find("^%d+,%d+$", 1, true) or seg:find("^%d+$", 1, true) == nil then
+            ok = false; errmsg = "无法识别的格式:"..seg
+        else
+            ok = true
+        end
+        if not ok then
+            local label = is_week and "周" or ""
+            return errmsg
+        end
+    end
+    return nil
+end
+
+local function validate_stime_entry(sec)
+    local minute = sec:get("minute")
+    local hour = sec:get("hour")
+    local month = sec:get("month")
+    local week = sec:get("week")
+    local err
+    err = check_cronfield(minute, 0, 59, false)
+        or check_cronfield(hour, 0, 23, false)
+        or check_cronfield(month, 1, 12, false)
+        or check_cronfield(week, 0, 7, true)
+    if err then
+        return ("时间字段非法（%s）：%s"):format(err, (minute or "") .. " " .. (hour or "") .. " " .. (month or "") .. " " .. (week or ""))
+    end
+    return nil
+end
+
 e = s:option(Value, "minute", translate("分 (0-59)"),
-    "支持 0-59 数字、* 通配、N-M 范围、*/N 步进。")
+    "支持 0-59 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
 e.rmempty = false
 e.default = "0"
+e.validate = function(self, value, sec, s)
+    local err = check_cronfield(value, 0, 59, false)
+    if err then
+        return nil, translate("分 字段非法（%s），请检查取值是否在 0-59 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
 
 e = s:option(Value, "hour", translate("时 (0-23)"),
-    "支持 0-23 数字、* 通配、N-M 范围、*/N 步进。")
+    "支持 0-23 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
 e.rmempty = false
 e.default = "0"
+e.validate = function(self, value, sec, s)
+    local err = check_cronfield(value, 0, 23, false)
+    if err then
+        return nil, translate("时 字段非法（%s），请检查取值是否在 0-23 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
 
 e = s:option(Value, "month", translate("月 (1-12 / *)"),
-    "1-12 或 *，支持 N-M 与 */N。")
+    "1-12 或 *，支持 N-M 与 */N。保存时校验，非法值不能保存。")
 e.default = "*"
 e.rmempty = false
+e.validate = function(self, value, sec, s)
+    local err = check_cronfield(value, 1, 12, false)
+    if err then
+        return nil, translate("月 字段非法（%s），请检查取值是否在 1-12 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
 
 e = s:option(Value, "week", translate("周 (0=每天 / 1-7)"),
-    "0=每天；1=周一 ... 7=周日；支持 1-5、1,3,5、*。")
+    "0=每天；1=周一 ... 7=周日；支持 1-5、1,3,5、*。保存时校验，非法值不能保存。")
 e.default = "0"
 e.rmempty = false
+e.validate = function(self, value, sec, s)
+    local err = check_cronfield(value, 0, 7, true)
+    if err then
+        return nil, translate("周 字段非法（%s），0=每天，1-7 对应周一~周日，支持 * / N / N-M / N,M / */N 的合法格式"):format(err)
+    end
+    return value
+end
 
 m.apply_on_parse = true
 m.on_after_apply = function(self, map)
