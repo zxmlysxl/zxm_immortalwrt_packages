@@ -66,13 +66,11 @@ e = s:option(Value, "minute", translate("分 (0-59)"),
     "支持 0-59 数字、* 通配、N-M 范围、*/N 步进。")
 e.rmempty = false
 e.default = "0"
-e.datatype = "uciq"
 
 e = s:option(Value, "hour", translate("时 (0-23)"),
     "支持 0-23 数字、* 通配、N-M 范围、*/N 步进。")
 e.rmempty = false
 e.default = "0"
-e.datatype = "uciq"
 
 e = s:option(Value, "month", translate("月 (1-12 / *)"),
     "1-12 或 *，支持 N-M 与 */N。")
