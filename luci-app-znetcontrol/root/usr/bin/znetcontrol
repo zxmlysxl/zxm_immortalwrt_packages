@@ -41,12 +41,14 @@ get_rule_display_name() {
 
 config_get_type() {
     ret=$(uci -q get "${NAME}.${1}")
-    echo "${ret:=$2}"
+    if [ -z "$ret" ]; then ret="$2"; fi
+    echo "$ret"
 }
 
 config_n_get() {
     ret=$(uci -q get "${NAME}.${1}.${2}")
-    echo "${ret:=$3}"
+    if [ -z "$ret" ]; then ret="$3"; fi
+    echo "$ret"
 }
 
 config_t_get() {

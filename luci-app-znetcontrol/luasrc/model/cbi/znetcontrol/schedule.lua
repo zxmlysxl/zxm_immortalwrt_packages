@@ -93,4 +93,59 @@ local function check_cronfield(val, min, max)
     return nil
 end
 
+e = s:option(Value, "minute", translate("分 (0-59)"),
+    "支持 0-59 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
+e.rmempty = false
+e.default = "0"
+e.validate = function(self, value)
+    local err = check_cronfield(value, 0, 59)
+    if err then
+        return nil, translate("分 字段非法（%s），请检查取值是否在 0-59 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
+
+e = s:option(Value, "hour", translate("时 (0-23)"),
+    "支持 0-23 数字、* 通配、N-M 范围、*/N 步进。保存时校验，非法值不能保存。")
+e.rmempty = false
+e.default = "0"
+e.validate = function(self, value)
+    local err = check_cronfield(value, 0, 23)
+    if err then
+        return nil, translate("时 字段非法（%s），请检查取值是否在 0-23 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
+
+e = s:option(Value, "month", translate("月 (1-12 / *)"),
+    "1-12 或 *，支持 N-M 与 */N。保存时校验，非法值不能保存。")
+e.default = "*"
+e.rmempty = false
+e.validate = function(self, value)
+    local err = check_cronfield(value, 1, 12)
+    if err then
+        return nil, translate("月 字段非法（%s），请检查取值是否在 1-12 之间，或使用了 * / N / N-M / */N 的合法格式"):format(err)
+    end
+    return value
+end
+
+e = s:option(Value, "week", translate("周 (0=每天 / 1-7)"),
+    "0=每天；1=周一 ... 7=周日；支持 1-5、1,3,5、*。保存时校验，非法值不能保存。")
+e.default = "0"
+e.rmempty = false
+e.validate = function(self, value)
+    local err = check_cronfield(value, 0, 7)
+    if err then
+        return nil, translate("周 字段非法（%s），0=每天，1-7 对应周一~周日，支持 * / N / N-M / N,M / */N 的合法格式"):format(err)
+    end
+    return value
+end
+
+m.apply_on_parse = true
+m.on_after_apply = function(self, map)
+    -- UCI 已 commit；通过 ucitrack 触发 /etc/init.d/znetcontrol reload，
+    -- 它会重写 /etc/crontabs/root 的标记块并 cron reload，无需手动操作。
+    sys.call("/etc/init.d/znetcontrol reload >/dev/null 2>&1")
+end
+
 return m

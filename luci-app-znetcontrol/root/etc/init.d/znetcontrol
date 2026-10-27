@@ -47,6 +47,7 @@ sched_write() {
     {
         echo "${ZBEGIN}"
         ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
+        [ "$ssum" -gt 0 ] 2>/dev/null || ssum=0
         for i in $(seq 0 $((ssum - 1))); do
             en=$(uci -q get "znetcontrol.@stime[${i}].enable" 2>/dev/null)
             [ "$en" = "1" ] || continue
@@ -54,6 +55,9 @@ sched_write() {
             hr=$(uci -q get "znetcontrol.@stime[${i}].hour" 2>/dev/null);  [ -n "$hr" ] || hr="0"
             mo=$(uci -q get "znetcontrol.@stime[${i}].month" 2>/dev/null); [ -n "$mo" ] || mo="*"
             wk=$(uci -q get "znetcontrol.@stime[${i}].week" 2>/dev/null);  [ -n "$wk" ] || wk="*"
+            # UI 语义: 0 = 每天; cron 语义: dow=0 表示周日, 每天必须用 *
+            # 不做转换的话, 选"0=每天"实际只在周日执行
+            [ "$wk" = "0" ] && wk="*"
             styp=$(uci -q get "znetcontrol.@stime[${i}].stype" 2>/dev/null); [ -n "$styp" ] || styp="network"
             rmark=$(uci -q get "znetcontrol.@stime[${i}].remarks" 2>/dev/null)
             [ -n "$rmark" ] || rmark="task${i}"
@@ -185,8 +189,10 @@ reload() {
 
 boot() {
     # boot 阶段无论规则服务是否启用, 都要把定时任务写进 crontab
+    # 必须走 rc.common 的 start (USE_PROCD 时内部会 procd_open_service/close_service),
+    # 直接调 start_service 会漏掉 procd 服务注册, UCI 会显示"已停止"
     sched_write
-    start_service
+    start "$@"
 }
 
 boot_done() {
@@ -194,6 +200,7 @@ boot_done() {
     if [ -f "$CRON" ] && ! grep -q "^${ZBEGIN}" "$CRON" 2>/dev/null; then
         local ssum
         ssum=$(grep -c 'config stime' /etc/config/znetcontrol 2>/dev/null || echo 0)
+        [ "$ssum" -gt 0 ] 2>/dev/null || ssum=0
         local en
         for i in $(seq 0 $((ssum - 1))); do
             [ "$i" -ge "$ssum" ] && break
@@ -203,4 +210,3 @@ boot_done() {
     fi
 }
 
-exit 0
