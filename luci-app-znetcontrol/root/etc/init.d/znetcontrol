@@ -106,11 +106,11 @@ post_stop_cleanup() {
 }
 
 start_service() {
-    # 定时任务块永远要写（即使规则服务没启用）
+    # 定时任务块无条件写入, 不依赖 nftables 规则服务是否启用
     sched_write
 
     if ! validate_service; then
-        log "规则服务: 没有启用规则或 nft 缺失, 跳过 nftables 服务"
+        log "规则服务: 没有启用规则或 nft 缺失, 跳过 nftables 服务(但定时任务已生效)"
         return 0
     fi
 
@@ -148,20 +148,16 @@ stop_service() {
 }
 
 reload_service() {
-    # UCI 变更统一入口: 重写 cron 块 + 重启规则服务
+    # UCI 变更统一入口: 先无条件重写 cron 块(不依赖规则服务), 再处理规则服务
     sched_write
-    if [ -f "$PIDFILE" ]; then
-        local pid
-        pid=$(cat "$PIDFILE" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-            kill -HUP "$pid" 2>/dev/null
-            /usr/bin/znetcontrol start >/dev/null 2>&1
-            log "reload: 规则服务已重载, 定时任务块已重写"
-            return 0
-        fi
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+        kill -HUP "$(cat "$PIDFILE")" 2>/dev/null
+        /usr/bin/znetcontrol start >/dev/null 2>&1
+        log "reload: 规则服务已重载, 定时任务块已重写"
+        return 0
     fi
-    log "reload: 规则进程不在, 重新拉起"
-    start_service
+    log "reload: 规则进程不在(或无启用规则), 定时任务块已写入, 跳过规则服务"
+    return 0
 }
 
 service_triggers() {
@@ -188,6 +184,8 @@ reload() {
 }
 
 boot() {
+    # boot 阶段无论规则服务是否启用, 都要把定时任务写进 crontab
+    sched_write
     start_service
 }
 
