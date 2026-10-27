@@ -15,6 +15,7 @@ mkdir -p /etc/taskplan 2>/dev/null
 
 log() {
     echo "$(date +'%Y-%m-%d %H:%M:%S') [ZNC-SCHED] $*" >> "$LOG"
+    logger -t znc-sched "$*" 2>/dev/null
 }
 
 dbg() {
@@ -27,6 +28,9 @@ for f in "$LOG" "$DLOG"; do
     c=$(grep -c "" "$f" 2>/dev/null || echo 0)
     [ "$c" -gt 500 ] && sed -i "1,$((c - 500))d" "$f" 2>/dev/null
 done
+
+# 统一入口记录: 无论哪种任务类型, 都先留一行可追溯的痕迹
+log "RUN type=${1:-none} task=$TASK args=$*"
 
 case "$1" in
     reboot)
