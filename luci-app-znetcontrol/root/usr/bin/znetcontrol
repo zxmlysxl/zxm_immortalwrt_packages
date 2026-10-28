@@ -65,6 +65,15 @@ is_valid_ipv4() {
     return 0
 }
 
+# 【2.3.11-r4】模式中文名：日志一律输出中文，避免 "main/bypass" 让人困惑
+mode_cn() {
+    case "$1" in
+        main)   echo "主路由" ;;
+        bypass) echo "旁路由" ;;
+        *)      echo "${1:-未知}" ;;
+    esac
+}
+
 # 获取规则名称的辅助函数
 get_rule_display_name() {
     id=$1
@@ -665,7 +674,7 @@ init_bypass_route() {
 init_timecontrol() {
     detect_gateway_mode
     
-    info "初始化时间控制（$GATEWAY_MODE 模式）"
+    info "初始化时间控制（$(mode_cn "$GATEWAY_MODE")模式）"
     
     case "$GATEWAY_MODE" in
         "main")
@@ -814,7 +823,7 @@ timeadd() {
         detect_gateway_mode
     fi
     display_name=$(get_rule_display_name "$id")
-    info "添加设备控制: 【$display_name】($target)，模式: $GATEWAY_MODE"
+    info "添加设备控制: 【$display_name】($target)，模式: $(mode_cn "$GATEWAY_MODE")"
     parsed_result=$(parse_target "$target")
     if [ $? -ne 0 ]; then
         dbg "无法解析目标地址: $target"
