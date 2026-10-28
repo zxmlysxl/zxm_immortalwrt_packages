@@ -600,7 +600,7 @@ init_main_route() {
         # 兼容集合规则：旧版把 MAC 塞进 mac_forward/mac_input 共享集合。
         # 新版每段独立 rule（comment=znc-r<id>-fwd/in），集合规则保留
         # 作为"手工/旧配置残留"的兜底，不影响多段并行。
-        nft_run add rule inet znetcontrol forward ether saddr @mac_forward drop counter comment "block-mac-forward" || log "ERROR: 保底规则 block-mac-forward 创建失败"
+        nft_run add rule inet znetcontrol forward ether saddr @mac_forward counter drop comment "block-mac-forward" || log "ERROR: 保底规则 block-mac-forward 创建失败"
         nft_run add rule inet znetcontrol forward ip saddr @ip_forward drop comment "block-ipv4-forward"
         nft_run add rule inet znetcontrol forward ip saddr @ip_mac drop comment "block-ipv4-mac-derived"
         nft_run add rule inet znetcontrol forward ip6 saddr @ip6_forward drop comment "block-ipv6-forward"
@@ -613,7 +613,7 @@ init_main_route() {
             nft_run add rule inet znetcontrol input ether saddr @mac_input udp dport 67 accept comment "allow-dhcp"
             nft_run add rule inet znetcontrol input ip saddr @ip_input udp dport 67 accept comment "allow-dhcp"
         fi
-        nft_run add rule inet znetcontrol input ether saddr @mac_input drop counter comment "block-mac-input" || log "ERROR: 保底规则 block-mac-input 创建失败"
+        nft_run add rule inet znetcontrol input ether saddr @mac_input counter drop comment "block-mac-input" || log "ERROR: 保底规则 block-mac-input 创建失败"
         nft_run add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
         nft_run add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
         
