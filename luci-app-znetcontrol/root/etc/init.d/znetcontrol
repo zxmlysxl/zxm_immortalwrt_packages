@@ -137,13 +137,16 @@ sched_write() {
 validate_service() {
     # 判断"是否存在启用的管控规则":
     #   uci show 输出的值带单引号(enable='1'), 用 grep 匹配容易踩引号坑;
-    #   这里直接逐条读 UCI 计数, 纯 ash 可靠
+    #   这里直接逐条读 UCI 计数, 纯 ash 可靠。
+    # 注意: 设备段里有 enable="0" 的空规则是常态, 不能一遇到空就 break,
+    #   否则前面全是禁用规则时会误判为"没有启用规则"; 上限 300 段防御死循环。
     # 另外 nft 用绝对路径定位, 不依赖 PATH(LuCI/ubus 拉起时 PATH 极简)
     _cnt=0
     _i=0
-    while true; do
+    while [ "$_i" -lt 300 ]; do
         _en=$(uci -q get "znetcontrol.@device[$_i].enable" 2>/dev/null)
-        [ -n "$_en" ] || break
+        _tg=$(uci -q get "znetcontrol.@device[$_i].target" 2>/dev/null)
+        [ -n "$_en" ] || [ -n "$_tg" ] || break
         [ "$_en" = "1" ] && _cnt=$((_cnt + 1))
         _i=$((_i + 1))
     done
@@ -207,7 +210,9 @@ start_service() {
     procd_close_instance
 
     sleep 2
+    # 只打日志, 不能影响退出码: 这里返回非 0 会让 rc.common 认为启动失败
     /usr/bin/znetcontrol status 2>/dev/null
+    return 0
 }
 
 stop_service() {
@@ -218,6 +223,8 @@ stop_service() {
     post_stop_cleanup
     pkill -f "znetcontrolctrl" 2>/dev/null
     sleep 1
+    # 同上: stop 的返回值不能让 rc.common 判定为失败
+    return 0
 }
 
 reload_service() {
@@ -237,22 +244,26 @@ service_triggers() {
     procd_add_reload_trigger "znetcontrol"
 }
 
-# ---------- rc.common 入口 ----------
-start() {
+# ---------- 入口 ----------
+# 注意: 这里不能定义 start/stop/restart/reload, 否则会覆盖 rc.common 的实现。
+# rc.common 在 USE_PROCD=1 时, 它的 start() 才会执行 procd_open_service/close_service;
+# 一旦被覆盖成直接调 start_service, procd 就不会注册服务实例,
+# /etc/init.d/znetcontrol status 永远 not running (2.3.8 的 BUG 根因之一)。
+_zstart() {
     start_service
 }
 
-stop() {
+_zstop() {
     stop_service
 }
 
-restart() {
-    stop
+_zrestart() {
+    _zstop
     sleep 2
-    start
+    _zstart
 }
 
-reload() {
+_zreload() {
     reload_service
 }
 
@@ -261,7 +272,16 @@ boot() {
     # 必须走 rc.common 的 start (USE_PROCD 时内部会 procd_open_service/close_service),
     # 直接调 start_service 会漏掉 procd 服务注册, UCI 会显示"已停止"
     sched_write
-    start "$@"
+    # rc.common 在 rc=procd 时, start() -> procd_start_service()
+    #     -> procd_open_service(NAME) / start_service / procd_close_service
+    # 这里等价地走一遍, 保证 procd 实例注册
+    if type procd_open_service >/dev/null 2>&1; then
+        procd_open_service "$NAME" "/etc/init.d/$NAME"
+        start_service
+        procd_close_service
+    else
+        start_service
+    fi
 }
 
 boot_done() {
