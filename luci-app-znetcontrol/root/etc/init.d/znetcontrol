@@ -26,6 +26,10 @@ CRONUSER=root
 ZBEGIN="#znc-sched-begin"
 ZEND="#znc-sched-end"
 
+# 显式 PATH: LuCI/ubus 拉起 init.d 时 PATH 极简, 会找不到 /usr/sbin/nft 等工具
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $@" >> "$LOGFILE"
 }
@@ -131,11 +135,24 @@ sched_write() {
 
 # ---------- nftables 规则服务 ----------
 validate_service() {
-    enabled_count=$(uci show znetcontrol 2>/dev/null | grep -c '\.enable="1"' 2>/dev/null || echo 0)
-    enabled_count=$(echo "$enabled_count" | grep -E '^[0-9]+$' || echo 0)
-    if [ "$enabled_count" -eq 0 ] 2>/dev/null; then
+    # 判断"是否存在启用的管控规则":
+    #   uci show 输出的值带单引号(enable='1'), 用 grep 匹配容易踩引号坑;
+    #   这里直接逐条读 UCI 计数, 纯 ash 可靠
+    # 另外 nft 用绝对路径定位, 不依赖 PATH(LuCI/ubus 拉起时 PATH 极简)
+    _cnt=0
+    _i=0
+    while true; do
+        _en=$(uci -q get "znetcontrol.@device[$_i].enable" 2>/dev/null)
+        [ -n "$_en" ] || break
+        [ "$_en" = "1" ] && _cnt=$((_cnt + 1))
+        _i=$((_i + 1))
+    done
+    if [ "$_cnt" -eq 0 ] 2>/dev/null; then
         return 1
     fi
+    for _p in /usr/sbin/nft /sbin/nft /usr/bin/nft /bin/nft; do
+        [ -x "$_p" ] && return 0
+    done
     command -v nft >/dev/null 2>&1 || return 1
     return 0
 }
@@ -167,14 +184,12 @@ start_service() {
     # 定时任务块无条件写入, 不依赖 nftables 规则服务是否启用
     sched_write
 
+    # 规则服务是可选增强: 无 nft / 无启用规则 / 清理失败时只跳过规则部分
+    # 但 procd 实例必须无条件注册, 否则服务没有 instance, UCI 永远显示"已停止"
     if ! validate_service; then
-        log "规则服务: 没有启用规则或 nft 缺失, 跳过 nftables 服务(但定时任务已生效)"
-        return 0
-    fi
-
-    if ! pre_start_cleanup; then
-        log "规则服务: 启动清理失败"
-        return 1
+        log "规则服务: 没有启用规则或 nft 缺失, 仅运行定时任务(服务仍为已启动)"
+    elif ! pre_start_cleanup; then
+        log "规则服务: 启动清理失败, 仅运行定时任务(服务仍为已启动)"
     fi
 
     procd_open_instance
@@ -182,6 +197,7 @@ start_service() {
     procd_set_param respawn
     procd_set_param respawn_retry 3600
     procd_set_param env ZNETCONTROL_DEBUG=0
+    procd_set_param env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     procd_set_param pidfile "$PIDFILE"
     procd_set_param stdout 1
     procd_set_param stderr 1
