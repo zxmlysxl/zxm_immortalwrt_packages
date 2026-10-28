@@ -22,6 +22,41 @@ bin_iptables=$(which iptables 2>/dev/null)
 bin_ip6tables=$(which ip6tables 2>/dev/null)
 bin_conntrack=$(which conntrack 2>/dev/null)
 
+# ================= 2.3.11 新增：nft 执行与校验 =================
+# 历史问题：nft add element 全部带 2>/dev/null，MAC 被 cut 截断成 "00"
+# 后 nft 拒绝该元素，错误被吞，日志却照常打印"已添加"，导致
+# "日志说生效、集合为空、设备照样上网"。此后一律留痕。
+
+nft_run() {
+    # $@ = nft 参数；失败写日志并返回非 0
+    _out=$(nft "$@" 2>&1)
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        case "$_out" in
+            *"File exists"*) return 0 ;;   # 元素已存在，视为成功（幂等）
+        esac
+        log "WARN: nft $* 失败(rc=$_rc): $_out"
+        return "$_rc"
+    fi
+    return 0
+}
+
+is_valid_mac() {
+    echo "$1" | grep -qE '^[0-9a-f]{2}(:[0-9a-f]{2}){5}$'
+}
+
+is_valid_ipv4() {
+    echo "$1" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
+    # 排除全零/空值兜底（历史上 "00" 会被 nft 零填充成 00:00:00:00:00:00）
+    case "$1" in
+        0.0.0.0) return 1 ;;
+    esac
+    for _o in $(echo "$1" | tr '.' ' '); do
+        [ "$_o" -le 255 ] 2>/dev/null || return 1
+    done
+    return 0
+}
+
 # 获取规则名称的辅助函数
 get_rule_display_name() {
     id=$1
@@ -98,7 +133,7 @@ parse_target() {
         for octet in $(echo "$target" | tr '.' ' '); do
             [ "$octet" -le 255 ] || return 1
         done
-        echo "ipv4:single:${target}"
+        echo "ipv4"; echo "single"; echo "${target}"
         return 0
     
     # IP范围
@@ -111,7 +146,7 @@ parse_target() {
         for octet in $(echo "$end_ip" | tr '.' ' '); do
             [ "$octet" -le 255 ] || return 1
         done
-        echo "ipv4:range:${target}"
+        echo "ipv4"; echo "range"; echo "${target}"
         return 0
     
     # CIDR格式
@@ -122,18 +157,18 @@ parse_target() {
             for octet in $(echo "$ip_part" | tr '.' ' '); do
                 [ "$octet" -le 255 ] || return 1
             done
-            echo "ipv4:cidr:${target}"
+            echo "ipv4"; echo "cidr"; echo "${target}"
             return 0
         fi
     
     # MAC地址
     elif echo "$target" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
-        echo "mac:single:$(echo $target | tr '[:upper:]' '[:lower:]')"
+        echo "mac"; echo "single"; echo "$target" | tr '[:upper:]' '[:lower:]'
         return 0
     
     # IPv6地址
     elif echo "$target" | grep -qE '^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$'; then
-        echo "ipv6:single:${target}"
+        echo "ipv6"; echo "single"; echo "${target}"
         return 0
     
     # IPv6 CIDR
@@ -141,7 +176,7 @@ parse_target() {
     ipv6=${target%/*}
     mask=${target#*/}
         if [ "$mask" -ge 0 ] && [ "$mask" -le 128 ]; then
-            echo "ipv6:cidr:${target}"
+            echo "ipv6"; echo "cidr"; echo "${target}"
             return 0
         fi
     fi
@@ -154,9 +189,9 @@ convert_to_old_format() {
     parsed_result=$(parse_target "$target")
     [ $? -ne 0 ] && return 1
     
-    type=$(echo "$parsed_result" | cut -d: -f1)
-    subtype=$(echo "$parsed_result" | cut -d: -f2)
-    value=$(echo "$parsed_result" | cut -d: -f3)
+    type=$(echo "$parsed_result" | sed -n '1p')
+    subtype=$(echo "$parsed_result" | sed -n '2p')
+    value=$(echo "$parsed_result" | sed -n '3p')
     
     case "$type" in
         "ipv4")
@@ -192,9 +227,9 @@ flush_connections() {
     if [ -x "$bin_conntrack" ]; then
     parsed_result=$(parse_target "${target}")
         if [ $? -eq 0 ]; then
-            type=$(echo "$parsed_result" | cut -d: -f1)
-    subtype=$(echo "$parsed_result" | cut -d: -f2)
-    value=$(echo "$parsed_result" | cut -d: -f3)
+            type=$(echo "$parsed_result" | sed -n '1p')
+    subtype=$(echo "$parsed_result" | sed -n '2p')
+    value=$(echo "$parsed_result" | sed -n '3p')
             
             case "${type}" in
                 "ipv4")
@@ -381,8 +416,16 @@ check_list() {
     
     if [ "$wweek" != "0" ]; then
     week_pattern=$(expand_week_pattern "$wweek")
-        # Use awk for literal string match (grep -E treats | as alternation, not literal)
-        if ! echo "$current_weekday" | awk -v p="$week_pattern" 'BEGIN{split(p,a,"|"); for(k in a) if(a[k]==$0) exit 1}'; then
+        # 【2.3.11 修复】原文案的 bug：
+        #   awk 'BEGIN{... if(a[k]==$0) exit 1}' —— BEGIN 阶段 $0 是空串，
+        #   比较恒为假，awk 永远 exit 0；外层再套 if !，于是"星期永不匹配失败"
+        #   = 任何星期都通过。表现为 start 把所有段都加入、ctrl 按自己的
+        #   逻辑又把不生效段删掉（del 按 MAC 值删元素，连带删掉生效段）。
+        # 修法：awk 直接 print 匹配结果(0=匹配/1=不匹配)，shell 侧判断，
+        #       不依赖 exit 码与 if ! 的取反语义（那是本次踩坑的根源）。
+        _wk_hit=$(echo "$current_weekday" | awk -v p="$week_pattern" -v c="$current_weekday" 'BEGIN{n=split(p,a,"|"); r=1; for(k=1;k<=n;k++) if(a[k]==c){r=0; break}; print r}')
+        _wk_hit=${_wk_hit:-1}
+        if [ "$_wk_hit" -ne 0 ]; then
             dbg "规则 $i 不在生效星期内（配置: $wweek, 当前: $current_weekday）"
             return 1
         fi
@@ -477,13 +520,13 @@ sync_mac_ip_sets() {
     for ip in $cur_v4; do
         case " $desired " in
             *" $ip "*) ;;
-            *) nft delete element inet znetcontrol ip_mac "{ $ip }" 2>/dev/null ;;
+            *) nft_run delete element inet znetcontrol ip_mac "{ $ip }" ;;
         esac
     done
     for ip in $cur_v6; do
         case " $desired " in
             *" $ip "*) ;;
-            *) nft delete element inet znetcontrol ip6_mac "{ $ip }" 2>/dev/null ;;
+            *) nft_run delete element inet znetcontrol ip6_mac "{ $ip }" ;;
         esac
     done
     
@@ -492,13 +535,13 @@ sync_mac_ip_sets() {
             *:*)
                 case " $cur_v6 " in
                     *" $ip "*) ;;
-                    *) nft add element inet znetcontrol ip6_mac "{ $ip }" 2>/dev/null ;;
+                    *) nft_run add element inet znetcontrol ip6_mac "{ $ip }" ;;
                 esac
                 ;;
             *)
                 case " $cur_v4 " in
                     *" $ip "*) ;;
-                    *) nft add element inet znetcontrol ip_mac "{ $ip }" 2>/dev/null ;;
+                    *) nft_run add element inet znetcontrol ip_mac "{ $ip }" ;;
                 esac
                 ;;
         esac
@@ -546,7 +589,10 @@ init_main_route() {
         
         nft add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
         # ether saddr 匹配同时覆盖 IPv4 / IPv6
-        nft add rule inet znetcontrol forward ether saddr @mac_forward drop comment "block-mac-forward"
+        # 兼容集合规则：旧版把 MAC 塞进 mac_forward/mac_input 共享集合。
+        # 新版每段独立 rule（comment=znc-r<id>-fwd/in），集合规则保留
+        # 作为"手工/旧配置残留"的兜底，不影响多段并行。
+        nft add rule inet znetcontrol forward ether saddr @mac_forward drop counter comment "block-mac-forward"
         nft add rule inet znetcontrol forward ip saddr @ip_forward drop comment "block-ipv4-forward"
         nft add rule inet znetcontrol forward ip saddr @ip_mac drop comment "block-ipv4-mac-derived"
         nft add rule inet znetcontrol forward ip6 saddr @ip6_forward drop comment "block-ipv6-forward"
@@ -559,7 +605,7 @@ init_main_route() {
             nft add rule inet znetcontrol input ether saddr @mac_input udp dport 67 accept comment "allow-dhcp"
             nft add rule inet znetcontrol input ip saddr @ip_input udp dport 67 accept comment "allow-dhcp"
         fi
-        nft add rule inet znetcontrol input ether saddr @mac_input drop comment "block-mac-input"
+        nft add rule inet znetcontrol input ether saddr @mac_input drop counter comment "block-mac-input"
         nft add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
         nft add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
         
@@ -631,19 +677,75 @@ main_route_timeadd() {
     chain=$3
     value=$4
     display_name=$5
-    
-    # 两种模式都必须先断外网（forward 钩子才是真正的出网路径）
-    nft add element inet znetcontrol mac_forward "{ $value }" 2>/dev/null
-    # 网关钉扎集合（pin_gateway=1 时生效）
+
+    # 【2.3.11 关键修复】多段规则并行
+    # 历史做法把 MAC 塞进共享集合 mac_forward / mac_input，
+    # 于是"同一设备配了工作日/周五/周末三段"时，任意一段执行 del
+    # 都会按 MAC 值把元素整个删掉，把正在生效的其它段一起带走
+    # （典型现象：日志说"在生效时间内"，集合却是空的，设备照常上网）。
+    # 现在每段规则使用独立的 nft rule + 唯一 comment，按 comment
+    # 精确增删，多段互不干扰。
+
+    if ! is_valid_mac "$value"; then
+        log "ERROR: 【$display_name】MAC 非法，拒绝写入 nft: [$value] (target=$target)"
+        return 1
+    fi
+
+    _c_fwd="znc-r${id}-fwd"
+    _c_in="znc-r${id}-in"
+
+    # 幂等：先清掉本段自己的旧 rule，避免重复添加
+    _del_rule_by_comment inet znetcontrol forward "$_c_fwd"
+    _del_rule_by_comment inet znetcontrol input "$_c_in"
+
+    # 出网路径：普通 / 强力两种模式都必须断
+    if nft_run insert rule inet znetcontrol forward ether saddr "$value" counter drop comment "$_c_fwd"; then
+        :
+    else
+        log "ERROR: 【$display_name】写入 forward 规则失败，MAC $value"
+    fi
+    # 网关钉扎集合（pin_gateway=1 时才有该表，不存在时静默）
     nft add element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null
-    
+
     if [ "$chain" = "input" ]; then
         # 强力控制：额外禁止访问路由器本身
-        nft add element inet znetcontrol mac_input "{ $value }" 2>/dev/null
-        info "✅ 【$display_name】主路由-强力控制：MAC $value（断外网 + 断访问路由器）"
+        if nft_run insert rule inet znetcontrol input ether saddr "$value" counter drop comment "$_c_in"; then
+            :
+        else
+            log "ERROR: 【$display_name】写入 input 规则失败，MAC $value"
+        fi
+        info "✅ 【$display_name】主路由-强力控制：MAC $value（断外网 + 断访问路由器，comment=$_c_fwd/$_c_in）"
     else
-        info "✅ 【$display_name】主路由-普通控制：MAC $value（仅断外网，仍可访问路由器）"
+        info "✅ 【$display_name】主路由-普通控制：MAC $value（仅断外网，comment=$_c_fwd）"
     fi
+    return 0
+}
+
+# 按 comment 精确删除某条规则（不按值删，避免误伤其它段）
+_del_rule_by_comment() {
+    _fam=$1; _tab=$2; _ch=$3; _cm=$4
+    _h=$(nft -a list chain "$_fam" "$_tab" "$_ch" 2>/dev/null \
+         | grep -F "comment \"$_cm\"" | sed -n 's/.*# handle \([0-9]*\).*/\1/p' | head -1)
+    [ -n "$_h" ] || return 0
+    nft_run delete rule "$_fam" "$_tab" "$_ch" handle "$_h"
+}
+
+# 该 MAC 是否还有其它"当前生效"的段（删除前的保底检查）
+_mac_has_other_active_rule() {
+    _id=$1; _mac=$2; _i=0
+    while [ "$_i" -lt 300 ]; do
+        _en=$(uci -q get "znetcontrol.@device[$_i].enable")
+        _tg=$(uci -q get "znetcontrol.@device[$_i].target")
+        [ -n "$_en" ] || [ -n "$_tg" ] || break
+        if [ "$_i" != "$_id" ] && [ "$_en" = "1" ]; then
+            _tg_l=$(echo "$_tg" | tr '[:upper:]' '[:lower:]')
+            if [ "$_tg_l" = "$_mac" ] && check_list "$_i"; then
+                return 0
+            fi
+        fi
+        _i=$((_i + 1))
+    done
+    return 1
 }
 
 bypass_route_timeadd() {
@@ -711,9 +813,9 @@ timeadd() {
         return
     fi
     
-    type=$(echo "$parsed_result" | cut -d: -f1)
-    subtype=$(echo "$parsed_result" | cut -d: -f2)
-    value=$(echo "$parsed_result" | cut -d: -f3)
+    type=$(echo "$parsed_result" | sed -n '1p')
+    subtype=$(echo "$parsed_result" | sed -n '2p')
+    value=$(echo "$parsed_result" | sed -n '3p')
     
     case "$type" in
         "mac")
@@ -732,10 +834,10 @@ timeadd() {
         "ipv4")
             if [ "$GATEWAY_MODE" = "main" ]; then
                 # 两种模式都先断外网
-                nft add element inet znetcontrol ip_forward "{ $value }" 2>/dev/null
+                nft_run add element inet znetcontrol ip_forward "{ $value }"
                 if [ "$chain" = "input" ]; then
                     # 强力控制：额外禁止访问路由器本身
-                    nft add element inet znetcontrol ip_input "{ $value }" 2>/dev/null
+                    nft_run add element inet znetcontrol ip_input "{ $value }"
                     info "✅ 【$display_name】主路由-IP强力控制：$value（断外网 + 断访问路由器）"
                 else
                     info "✅ 【$display_name】主路由-IP普通控制：$value（仅断外网）"
@@ -772,9 +874,9 @@ timedel() {
         return
     fi
     
-    type=$(echo "$parsed_result" | cut -d: -f1)
-    subtype=$(echo "$parsed_result" | cut -d: -f2)
-    value=$(echo "$parsed_result" | cut -d: -f3)
+    type=$(echo "$parsed_result" | sed -n '1p')
+    subtype=$(echo "$parsed_result" | sed -n '2p')
+    value=$(echo "$parsed_result" | sed -n '3p')
     
     if [ -n "$bin_nft" ]; then
         case "$type" in
@@ -782,11 +884,19 @@ timedel() {
                 value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
                 
                 if [ "$GATEWAY_MODE" = "main" ]; then
-                    # forward / input 两个集合都要清理
-                    nft delete element inet znetcontrol mac_forward "{ $value }" 2>/dev/null || true
-                    nft delete element inet znetcontrol mac_input "{ $value }" 2>/dev/null || true
-                    nft delete element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null || true
-                    info "✅ 【$display_name】从防火墙移除: MAC $value"
+                    # 【2.3.11】只删本段自己的 rule（按 comment），
+                    # 并保底检查：同一 MAC 若还有其它段处于生效期，则不动公共集合
+                    _del_rule_by_comment inet znetcontrol forward "znc-r${id}-fwd"
+                    _del_rule_by_comment inet znetcontrol input "znc-r${id}-in"
+                    # 兼容旧版残留：共享集合里的元素只有确认无其它生效段时才清
+                    if ! _mac_has_other_active_rule "$id" "$value"; then
+                        nft delete element inet znetcontrol mac_forward "{ $value }" 2>/dev/null || true
+                        nft delete element inet znetcontrol mac_input "{ $value }" 2>/dev/null || true
+                        nft delete element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null || true
+                    else
+                        dbg "【$display_name】MAC $value 仍有其它生效段，跳过共享集合清理"
+                    fi
+                    info "✅ 【$display_name】从防火墙移除: MAC $value（comment=znc-r${id}-fwd）"
                 else
                     # 删除MAC地址规则
                     nft delete rule inet znetcontrol forward handle $(nft -a list chain inet znetcontrol forward 2>/dev/null | grep "ether saddr $value" | awk '{print $NF}' | head -1) 2>/dev/null || true
@@ -964,7 +1074,7 @@ show_help() {
     echo "  3. CIDR: 192.168.1.0/24"
     echo "  4. MAC地址: 00:11:22:33:44:55"
     echo ""
-    echo "用法: $0 {start|stop|add <id>|del <id>|status|help}"
+    echo "用法: $0 {start|stop|add <id>|del <id>|check <id>|sync|status|help}"
     echo ""
     echo "配置: 编辑 /etc/config/znetcontrol"
     echo "日志: 查看 /var/log/znetcontrol.log"
@@ -1024,7 +1134,15 @@ case "$crrun" in
         
         init_timecontrol
         
-        # ===== 【新增】清理禁用规则的残留 =====
+        # ===== 【2.3.11】清理旧版共享集合里的僵尸元素 =====
+        # 旧版按 MAC 值写共享集合，任何一段 del 都会删掉整个元素；
+        # 升级后集合里的元素不可信，直接清空，改由每段独立 rule 承担。
+        nft flush set inet znetcontrol mac_forward 2>/dev/null || true
+        nft flush set inet znetcontrol mac_input 2>/dev/null || true
+        info "已清空旧版共享集合残留，改用每段独立规则"
+        # ===== 结束 =====
+
+        # ===== 清理禁用规则的残留 =====
         all_index=0
         while true; do
             en=$(uci -q get "znetcontrol.@device[$all_index].enable")
@@ -1115,6 +1233,19 @@ case "$crrun" in
         done
         ;;
         
+    "check")
+        # 【2.3.11】唯一时间判定入口：start 与 ctrl 共用
+        # 退出码 0 = 该段当前处于生效期；1 = 不在生效期
+        id=$(echo "$crid" | sed -e 's/!//g' | cut -d, -f1)
+        [ -z "$id" ] && exit 1
+        en=$(config_t_get device enable "$id")
+        [ "$en" = "1" ] || exit 1
+        if check_list "$id"; then
+            exit 0
+        fi
+        exit 1
+        ;;
+
     "sync")
         # 同步派生IP集合（由 znetcontrolctrl 定时调用）
         if [ -z "$GATEWAY_MODE" ]; then

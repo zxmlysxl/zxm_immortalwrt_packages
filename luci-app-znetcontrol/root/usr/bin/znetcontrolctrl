@@ -124,16 +124,20 @@ is_weekday_in_range() {
 
 check_device() {
     id=$1
-    start_time=$(config_t_get device timestart $id)
-    end_time=$(config_t_get device timeend $id)
-    weekdays=$(config_t_get device week $id)
     enable_val=$(config_t_get device enable $id)
-    
+
     # 检查是否启用
     [ "$enable_val" != "1" ] && return 1
-    
-    # 检查星期和时间
-    is_weekday_in_range "$weekdays" && is_time_in_range "$start_time" "$end_time"
+
+    # 【2.3.11】时间/星期判定唯一入口：委托给 znetcontrol check
+    # 历史问题: ctrl 用自己的 is_weekday_in_range，而 start 用 check_list
+    # （其 awk 在 BEGIN 里比较 $0 空串，星期恒通过），两套判定分叉，
+    # 导致 start 把所有段都加入、ctrl 随即按自己的判定删掉不生效的段，
+    # 而 del 是按 MAC 值删元素，会把其它正在生效的段一并删掉。
+    if /usr/bin/znetcontrol check "$id" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
 }
 
 update_device_status() {
