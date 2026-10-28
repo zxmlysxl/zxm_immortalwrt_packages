@@ -119,11 +119,11 @@ if (document.readyState === 'loading') {
                 <!-- 日志显示区域 -->
                 <div style="width: 100%; position: relative;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding: 5px 0; border-bottom: 1px solid var(--znc-border, rgba(0,0,0,0.08));">
-                        <div style="font-size: 12px; color: var(--znc-secondary-text, #718096));">
+                        <div style="font-size: 12px; color: var(--znc-secondary-text, #718096);">
                             <i class="icon icon-file-text"></i> 日志文件: 
                             <code>/var/log/znetcontrol.log</code>
                         </div>
-                        <div style="font-size: 12px; color: var(--znc-secondary-text, #718096));">
+                        <div style="font-size: 12px; color: var(--znc-secondary-text, #718096);">
                             共 <span id="line-count">0</span> 行 | 
                             刷新间隔: <span id="refresh-display">30</span>秒 |
                             备份模式: <span id="backup-display">不备份</span> |
@@ -448,7 +448,7 @@ function refreshLogs() {
     const lineCountElement = document.getElementById('line-count');
     
     // 显示加载状态
-    logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096));">正在加载日志...</div>';
+    logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096);">正在加载日志...</div>';
     
     const logSel = document.getElementById("log-level");
     const wantSched = logSel && logSel.value === "sched";
@@ -471,7 +471,7 @@ function refreshLogs() {
             
             if (logs.length === 0) {
                 // 修复：空日志时显示友好提示，而非错误
-                logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096));">暂无日志记录</div>';
+                logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096);">暂无日志记录</div>';
                 lineCountElement.textContent = '0';
             } else {
                 // 限制显示行数
@@ -502,7 +502,7 @@ function refreshLogs() {
         })
         .catch(error => {
             console.error('加载日志失败:', error);
-            logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-danger-text, #721c24));">' +
+            logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-danger-text, #721c24);">' +
                                   '加载日志失败<br>' + escapeHtml(error.message) + '<br>' +
                                   '请刷新页面重试</div>';
             lineCountElement.textContent = '0';
@@ -559,7 +559,7 @@ function filterLogs() {
     
     if (currentLogs.length === 0) {
         // 修复：空日志时显示友好提示
-        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096));">没有日志数据</div>';
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096);">没有日志数据</div>';
         lineCountElement.textContent = '0';
         return;
     }
@@ -573,7 +573,7 @@ function filterLogs() {
     const filtered = filterByLevel(displayLogs, level);
     
     if (filtered.length === 0) {
-        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096));">没有匹配的日志</div>';
+        logElement.innerHTML = '<div style="text-align: center; padding: 50px; color: var(--znc-secondary-text, #718096);">没有匹配的日志</div>';
         lineCountElement.textContent = '0';
     } else {
         let html = '';
@@ -593,17 +593,17 @@ function formatLogLine(log) {
     if (log.includes('═') || log.includes('║') || log.includes('╔') || 
         log.includes('╚') || log.includes('─') || log.includes('│') ||
         log.includes('┌') || log.includes('└')) {
-        return '<span style="color: var(--znc-log-stat, #0f766e));">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat, #0f766e);">' + escapeHtml(log) + '</span>';
     }
     
     // 处理规则统计
     if (log.includes('📊')) {
-        return '<span style="color: var(--znc-log-stat, #0f766e)); font-weight: bold;">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat, #0f766e); font-weight: bold;">' + escapeHtml(log) + '</span>';
     }
     
     // 处理更新开始/结束标记
     if (log.includes('======') || log.includes('============')) {
-        return '<span style="color: var(--znc-log-stat, #0f766e)); font-weight: bold;">' + escapeHtml(log) + '</span>';
+        return '<span style="color: var(--znc-log-stat, #0f766e); font-weight: bold;">' + escapeHtml(log) + '</span>';
     }
     
     // 定时任务日志: 2026-10-27 21:06:40 [ZNC-SCHED] xxx
@@ -612,15 +612,28 @@ function formatLogLine(log) {
         const sTs = schedMatch[1];
         const sMsg = schedMatch[2] || '';
         let sColor = 'var(--znc-log-info, #2563eb)';
+        let sIcon = '';
 
-        if (sMsg.indexOf('完成') >= 0) sColor = 'var(--znc-log-ok, #155724)';
+        // 与管控日志同一套语义分级，颜色保持一致
+        if (sMsg.indexOf('失败') >= 0 || sMsg.indexOf('未知') >= 0 || sMsg.indexOf('ERROR') >= 0) {
+            sColor = 'var(--znc-danger-text, #721c24)';
+            sIcon = '❌ ';
 
-        else if (sMsg.indexOf('RUN type=') >= 0) sColor = 'var(--znc-log-stat, #0f766e)';
+        } else if (sMsg.indexOf('移除') >= 0 || sMsg.indexOf('撤除') >= 0) {
+            sColor = 'var(--znc-log-removed, #c2410c)';
+            sIcon = '⏏ ';
 
-        else if (sMsg.indexOf('未知') >= 0 || sMsg.indexOf('失败') >= 0) sColor = 'var(--znc-danger-text, #721c24)';
+        } else if (sMsg.indexOf('完成') >= 0) {
+            sColor = 'var(--znc-log-ok, #155724)';
+            sIcon = '✅ ';
+
+        } else if (sMsg.indexOf('RUN type=') >= 0) {
+            sColor = 'var(--znc-log-stat, #0f766e)';
+            sIcon = '▶ ';
+        }
 
         return '<span style="color: var(--znc-log-ts, #1e40af);">' + escapeHtml(sTs) + '</span> ' +
-               '<span style="color:' + sColor + ';">[定时] ' + escapeHtml(sMsg) + '</span>';
+               '<span style="color:' + sColor + ';">' + sIcon + '[定时] ' + escapeHtml(sMsg) + '</span>';
 
     }
 
@@ -630,41 +643,67 @@ function formatLogLine(log) {
         const timestamp = timestampMatch[1];
         const message = timestampMatch[2] || '';
         
-        let color = 'var(--znc-log-info, #2563eb))'; // 默认信息色
+        let color = 'var(--znc-log-info, #2563eb)'; // 默认信息色
         let icon = '';
-        
-        if (message.includes('✅')) {
-            color = 'var(--znc-log-ok, #155724))';
-            icon = '✅ ';
-        } else if (message.includes('❌')) {
-            color = 'var(--znc-danger-text, #721c24))';
+
+        // ===== 按语义分级着色（顺序即优先级） =====
+        // 1) 错误 / 失败：最高优先级，必须一眼看到
+        if (message.includes('ERROR') || message.includes('❌') ||
+            message.includes('失败') || message.includes('非法')) {
+            color = 'var(--znc-danger-text, #721c24)';
             icon = '❌ ';
-        } else if (message.includes('⚠')) {
-            color = 'var(--znc-log-warn, #856404))';
+
+        // 2) 警告
+        } else if (message.includes('WARN') || message.includes('⚠')) {
+            color = 'var(--znc-log-warn, #856404)';
             icon = '⚠ ';
+
+        // 3) 管控解除 / 规则移除 —— 橙色，与"添加生效"的绿色形成对比
+        } else if (message.includes('从防火墙移除') || message.includes('移除规则') ||
+                   message.includes('撤除')) {
+            color = 'var(--znc-log-removed, #c2410c)';
+            icon = '⏏ ';
+
+        // 4) 管控生效 / 规则添加 —— 绿色
+        } else if (message.includes('添加设备控制') || message.includes('已添加到防火墙') ||
+                   message.includes('主路由-强力控制') || message.includes('主路由-普通控制') ||
+                   message.includes('主路由-IP强力控制') || message.includes('主路由-IP普通控制') ||
+                   message.includes('旁路由-IP控制') || message.includes('旁路由规则添加')) {
+            color = 'var(--znc-log-ok, #155724)';
+            icon = '✅ ';
+
+        // 5) 时间判定轮询（每 30 秒一条，弱化为灰色，避免刷屏干扰）
+        } else if (message.includes('在生效时间内') || message.includes('不在生效时间内')) {
+            color = 'var(--znc-secondary-text, #718096)';
+
+        // 6) 其余特殊标记
         } else if (message.includes('⏰')) {
-            color = 'var(--znc-log-err, #a62121))';
+            color = 'var(--znc-log-err, #a62121)';
             icon = '⏰ ';
         } else if (message.includes('🔕')) {
-            color = 'var(--znc-log-warn, #856404))';
+            color = 'var(--znc-log-warn, #856404)';
             icon = '🔕 ';
         } else if (message.includes('🔒')) {
-            color = 'var(--znc-log-stat, #0f766e))';
+            color = 'var(--znc-log-stat, #0f766e)';
             icon = '🔒 ';
         } else if (message.includes('🔗')) {
-            color = 'var(--znc-log-stat, #0f766e))';
+            color = 'var(--znc-log-stat, #0f766e)';
             icon = '🔗 ';
+        } else if (message.includes('✅')) {
+            // 兜底：其它带 ✅ 但未命中具体语义的日志，仍用绿色
+            color = 'var(--znc-log-ok, #155724)';
+            icon = '✅ ';
         } else if (message.includes('解析规则')) {
-            color = 'var(--znc-log-stat, #0f766e))';
+            color = 'var(--znc-log-stat, #0f766e)';
         } else if (message.includes('重新加载规则') || message.includes('从配置文件加载规则')) {
-            color = 'var(--znc-log-stat, #0f766e))';
+            color = 'var(--znc-log-stat, #0f766e)';
         }
         
-        return '<span style="color: var(--znc-log-ts, #1e40af));">' + escapeHtml(timestamp) + '</span> - ' +
+        return '<span style="color: var(--znc-log-ts, #1e40af);">' + escapeHtml(timestamp) + '</span> - ' +
                '<span style="color: ' + color + '">' + icon + escapeHtml(message) + '</span>';
     }
     
-    return '<span style="color: var(--znc-log-info, #2563eb));">' + escapeHtml(log) + '</span>';
+    return '<span style="color: var(--znc-log-info, #2563eb);">' + escapeHtml(log) + '</span>';
 }
 
 function clearLogs() {
@@ -997,22 +1036,22 @@ function detectMobile() {
             container.innerHTML = `
                 <div style="display: flex; flex-direction: column; gap: 15px; width: 100%;">
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-primary-border, #c5d8f2); border-top: 3px solid var(--znc-primary-text, #2d3748); background: linear-gradient(135deg, var(--znc-primary-bg, #eef4fb) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-primary-bg, rgba(64,120,244,0.12));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-primary-text, #2d3748)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-primary-bg, #eef4fb); border:1px solid var(--znc-primary-border, #c5d8f2); color: var(--znc-primary-text, #2d3748)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span><span style="letter-spacing:0.3px;">日志等级说明</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-primary-text, #2d3748); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-primary-bg, #eef4fb); border:1px solid var(--znc-primary-border, #c5d8f2); color: var(--znc-primary-text, #2d3748); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span><span style="letter-spacing:0.3px;">日志等级说明</span></h4>
                         <div style="font-size: 12px;">
-                            <p><span style="color: var(--znc-log-info, #2563eb));">■ 信息</span> - 普通操作记录</p>
-                            <p><span style="color: var(--znc-log-ok, #155724));">✅ 成功</span> - 操作成功完成</p>
-                            <p><span style="color: var(--znc-log-warn, #856404));">⚠ 警告</span> - 需要注意的情况</p>
-                            <p><span style="color: var(--znc-danger-text, #721c24));">❌ 错误</span> - 错误和失败信息</p>
-                            <p><span style="color: var(--znc-log-err, #a62121));">⏰ 时间</span> - 规则时间相关</p>
-                            <p><span style="color: var(--znc-log-warn, #856404));">🔕 禁用</span> - 规则被禁用</p>
-                            <p><span style="color: var(--znc-log-stat, #0f766e));">🔒 强力</span> - 强力控制规则</p>
-                            <p><span style="color: var(--znc-log-stat, #0f766e));">🔗 普通</span> - 普通控制规则</p>
-                            <p><span style="color: var(--znc-log-stat, #0f766e));">📊 统计</span> - 规则统计信息</p>
+                            <p><span style="color: var(--znc-log-info, #2563eb);">■ 信息</span> - 普通操作记录</p>
+                            <p><span style="color: var(--znc-log-ok, #155724);">✅ 成功</span> - 操作成功完成</p>
+                            <p><span style="color: var(--znc-log-warn, #856404);">⚠ 警告</span> - 需要注意的情况</p>
+                            <p><span style="color: var(--znc-danger-text, #721c24);">❌ 错误</span> - 错误和失败信息</p>
+                            <p><span style="color: var(--znc-log-err, #a62121);">⏰ 时间</span> - 规则时间相关</p>
+                            <p><span style="color: var(--znc-log-warn, #856404);">🔕 禁用</span> - 规则被禁用</p>
+                            <p><span style="color: var(--znc-log-stat, #0f766e);">🔒 强力</span> - 强力控制规则</p>
+                            <p><span style="color: var(--znc-log-stat, #0f766e);">🔗 普通</span> - 普通控制规则</p>
+                            <p><span style="color: var(--znc-log-stat, #0f766e);">📊 统计</span> - 规则统计信息</p>
                         </div>
                     </div>
                     
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-success-border, #c3e6cb); border-top: 3px solid var(--znc-success-text, #155724); background: linear-gradient(135deg, var(--znc-success-bg, #d4edda) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-success-bg, rgba(40,167,69,0.18));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-success-text, #155724)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-success-bg, #d4edda); border:1px solid var(--znc-success-border, #c3e6cb); color: var(--znc-success-text, #155724)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></span><span style="letter-spacing:0.3px;">操作说明</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-success-text, #155724); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-success-bg, #d4edda); border:1px solid var(--znc-success-border, #c3e6cb); color: var(--znc-success-text, #155724); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></span><span style="letter-spacing:0.3px;">操作说明</span></h4>
                         <div style="font-size: 12px;">
                             <p><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p><strong>清空日志</strong> - 清空当前日志</p>
@@ -1025,7 +1064,7 @@ function detectMobile() {
                     </div>
                     
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-warn-border, #ffeeba); border-top: 3px solid var(--znc-warn-text, #856404); background: linear-gradient(135deg, var(--znc-warn-bg, #fff3cd) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-warn-bg, rgba(255,193,7,0.16));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-warn-text, #856404)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-warn-bg, #fff3cd); border:1px solid var(--znc-warn-border, #ffeeba); color: var(--znc-warn-text, #856404)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span><span style="letter-spacing:0.3px;">使用提示</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-warn-text, #856404); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-warn-bg, #fff3cd); border:1px solid var(--znc-warn-border, #ffeeba); color: var(--znc-warn-text, #856404); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span><span style="letter-spacing:0.3px;">使用提示</span></h4>
                         <div style="font-size: 12px;">
                             <p>• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p>• 自动刷新: 可配置间隔时间</p>
@@ -1035,13 +1074,13 @@ function detectMobile() {
                             <p>• 支持按类型过滤: 信息、成功、警告、错误等</p>
                             <p>• 日志表情说明:</p>
                             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;">
-                                <span style="color: var(--znc-log-ok, #155724));">✅ 成功</span>
-                                <span style="color: var(--znc-log-warn, #856404));">⚠ 警告</span>
-                                <span style="color: var(--znc-danger-text, #721c24));">❌ 错误</span>
-                                <span style="color: var(--znc-log-err, #a62121));">⏰ 时间</span>
-                                <span style="color: var(--znc-log-warn, #856404));">🔕 禁用</span>
-                                <span style="color: var(--znc-log-stat, #0f766e));">🔒 强力</span>
-                                <span style="color: var(--znc-log-stat, #0f766e));">🔗 普通</span>
+                                <span style="color: var(--znc-log-ok, #155724);">✅ 成功</span>
+                                <span style="color: var(--znc-log-warn, #856404);">⚠ 警告</span>
+                                <span style="color: var(--znc-danger-text, #721c24);">❌ 错误</span>
+                                <span style="color: var(--znc-log-err, #a62121);">⏰ 时间</span>
+                                <span style="color: var(--znc-log-warn, #856404);">🔕 禁用</span>
+                                <span style="color: var(--znc-log-stat, #0f766e);">🔒 强力</span>
+                                <span style="color: var(--znc-log-stat, #0f766e);">🔗 普通</span>
                             </div>
                         </div>
                     </div>
@@ -1052,49 +1091,49 @@ function detectMobile() {
             container.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; width: 100%;">
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-primary-border, #c5d8f2); border-top: 3px solid var(--znc-primary-text, #2d3748); background: linear-gradient(135deg, var(--znc-primary-bg, #eef4fb) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-primary-bg, rgba(64,120,244,0.12));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-primary-text, #2d3748)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-primary-bg, #eef4fb); border:1px solid var(--znc-primary-border, #c5d8f2); color: var(--znc-primary-text, #2d3748)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span><span style="letter-spacing:0.3px;">日志等级说明</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-primary-text, #2d3748); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-primary-bg, #eef4fb); border:1px solid var(--znc-primary-border, #c5d8f2); color: var(--znc-primary-text, #2d3748); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></span><span style="letter-spacing:0.3px;">日志等级说明</span></h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-info, #2563eb)); margin-right: 5px; flex-shrink: 0;">■</span>
+                                <span style="color: var(--znc-log-info, #2563eb); margin-right: 5px; flex-shrink: 0;">■</span>
                                 <strong style="margin-right: 5px;">信息</strong> - 普通操作记录
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-ok, #155724)); margin-right: 5px; flex-shrink: 0;">✅</span>
+                                <span style="color: var(--znc-log-ok, #155724); margin-right: 5px; flex-shrink: 0;">✅</span>
                                 <strong style="margin-right: 5px;">成功</strong> - 操作成功完成
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-warn, #856404)); margin-right: 5px; flex-shrink: 0;">⚠</span>
+                                <span style="color: var(--znc-log-warn, #856404); margin-right: 5px; flex-shrink: 0;">⚠</span>
                                 <strong style="margin-right: 5px;">警告</strong> - 需要注意的情况
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-danger-text, #721c24)); margin-right: 5px; flex-shrink: 0;">❌</span>
+                                <span style="color: var(--znc-danger-text, #721c24); margin-right: 5px; flex-shrink: 0;">❌</span>
                                 <strong style="margin-right: 5px;">错误</strong> - 错误和失败信息
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-err, #a62121)); margin-right: 5px; flex-shrink: 0;">⏰</span>
+                                <span style="color: var(--znc-log-err, #a62121); margin-right: 5px; flex-shrink: 0;">⏰</span>
                                 <strong style="margin-right: 5px;">时间</strong> - 规则时间相关
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-warn, #856404)); margin-right: 5px; flex-shrink: 0;">🔕</span>
+                                <span style="color: var(--znc-log-warn, #856404); margin-right: 5px; flex-shrink: 0;">🔕</span>
                                 <strong style="margin-right: 5px;">禁用</strong> - 规则被禁用
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-stat, #0f766e)); margin-right: 5px; flex-shrink: 0;">🔒</span>
+                                <span style="color: var(--znc-log-stat, #0f766e); margin-right: 5px; flex-shrink: 0;">🔒</span>
                                 <strong style="margin-right: 5px;">强力</strong> - 强力控制规则
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-stat, #0f766e)); margin-right: 5px; flex-shrink: 0;">🔗</span>
+                                <span style="color: var(--znc-log-stat, #0f766e); margin-right: 5px; flex-shrink: 0;">🔗</span>
                                 <strong style="margin-right: 5px;">普通</strong> - 普通控制规则
                             </p>
                             <p style="margin: 0; display: flex; align-items: center; min-height: 20px;">
-                                <span style="color: var(--znc-log-stat, #0f766e)); margin-right: 5px; flex-shrink: 0;">📊</span>
+                                <span style="color: var(--znc-log-stat, #0f766e); margin-right: 5px; flex-shrink: 0;">📊</span>
                                 <strong style="margin-right: 5px;">统计</strong> - 规则统计信息
                             </p>
                         </div>
                     </div>
                     
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-success-border, #c3e6cb); border-top: 3px solid var(--znc-success-text, #155724); background: linear-gradient(135deg, var(--znc-success-bg, #d4edda) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-success-bg, rgba(40,167,69,0.18));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-success-text, #155724)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-success-bg, #d4edda); border:1px solid var(--znc-success-border, #c3e6cb); color: var(--znc-success-text, #155724)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></span><span style="letter-spacing:0.3px;">操作说明</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-success-text, #155724); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-success-bg, #d4edda); border:1px solid var(--znc-success-border, #c3e6cb); color: var(--znc-success-text, #155724); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg></span><span style="letter-spacing:0.3px;">操作说明</span></h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;"><strong>刷新日志</strong> - 重新加载最新日志</p>
                             <p style="margin: 0;"><strong>清空日志</strong> - 清空当前日志</p>
@@ -1107,7 +1146,7 @@ function detectMobile() {
                     </div>
                     
                     <div style="padding: 15px; border-radius: 10px; border: 1px solid var(--znc-warn-border, #ffeeba); border-top: 3px solid var(--znc-warn-text, #856404); background: linear-gradient(135deg, var(--znc-warn-bg, #fff3cd) 0%, var(--znc-box-bg, rgba(0,0,0,0.03)) 60%); box-shadow: 0 2px 10px var(--znc-warn-bg, rgba(255,193,7,0.16));">
-                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-warn-text, #856404)); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-warn-bg, #fff3cd); border:1px solid var(--znc-warn-border, #ffeeba); color: var(--znc-warn-text, #856404)); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span><span style="letter-spacing:0.3px;">使用提示</span></h4>
+                        <h4 style="margin: 0 0 10px 0; font-weight: 600; color: var(--znc-warn-text, #856404); display: flex; align-items: center; gap: 8px;"><span style="display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:9px; background: var(--znc-warn-bg, #fff3cd); border:1px solid var(--znc-warn-border, #ffeeba); color: var(--znc-warn-text, #856404); box-shadow: var(--znc-badge-shadow, inset 0 -2px 4px rgba(0,0,0,0.06));"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span><span style="letter-spacing:0.3px;">使用提示</span></h4>
                         <div style="font-size: 12px; display: flex; flex-direction: column; gap: 5px;">
                             <p style="margin: 0;">• 日志文件: <code>/var/log/znetcontrol.log</code></p>
                             <p style="margin: 0;">• 自动刷新: 可配置间隔时间</p>
@@ -1118,13 +1157,13 @@ function detectMobile() {
                             <div style="margin-top: 5px;">
                                 <p style="margin: 0 0 3px 0; font-weight: bold;">日志表情说明:</p>
                                 <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                                    <span style="color: var(--znc-log-ok, #155724));">✅ 成功</span>
-                                    <span style="color: var(--znc-log-warn, #856404));">⚠ 警告</span>
-                                    <span style="color: var(--znc-danger-text, #721c24));">❌ 错误</span>
-                                    <span style="color: var(--znc-log-err, #a62121));">⏰ 时间</span>
-                                    <span style="color: var(--znc-log-warn, #856404));">🔕 禁用</span>
-                                    <span style="color: var(--znc-log-stat, #0f766e));">🔒 强力</span>
-                                    <span style="color: var(--znc-log-stat, #0f766e));">🔗 普通</span>
+                                    <span style="color: var(--znc-log-ok, #155724);">✅ 成功</span>
+                                    <span style="color: var(--znc-log-warn, #856404);">⚠ 警告</span>
+                                    <span style="color: var(--znc-danger-text, #721c24);">❌ 错误</span>
+                                    <span style="color: var(--znc-log-err, #a62121);">⏰ 时间</span>
+                                    <span style="color: var(--znc-log-warn, #856404);">🔕 禁用</span>
+                                    <span style="color: var(--znc-log-stat, #0f766e);">🔒 强力</span>
+                                    <span style="color: var(--znc-log-stat, #0f766e);">🔗 普通</span>
                                 </div>
                             </div>
                         </div>
@@ -1304,7 +1343,7 @@ select {
     border-radius: 4px;
     padding: 5px 10px;
     font-size: 13px;
-    color: var(--znc-primary-text, #2d3748));
+    color: var(--znc-primary-text, #2d3748);
 }
 
 /* 响应式调整 */

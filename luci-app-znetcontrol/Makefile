@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-znetcontrol
-PKG_VERSION:=2.3.11
-PKG_RELEASE:=202610286
+PKG_VERSION:=2.3.12
+PKG_RELEASE:=202610291
 PKG_MAINTAINER:=zuoxm <zxmlysxl@gmail.com>
 
 LUCI_TITLE:=佐罗上网管控

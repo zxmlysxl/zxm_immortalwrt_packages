@@ -38,6 +38,8 @@ M.tok = {
 	log_warn        = { "#856404",                 "#ffcc00" },
 	log_err         = { "#a62121",                 "#ce9178" },
 	log_stat        = { "#0f766e",                 "#4ec9b0" },
+	-- 管控解除/规则移除用橙色，与"添加生效"(绿)形成对比
+	log_removed     = { "#c2410c",                 "#d7ba7d" },
 	log_border      = { "rgba(0,0,0,0.10)",       "rgba(255,255,255,0.20)" },
 	input_bg        = { "#ffffff",                 "rgba(255,255,255,0.08)" },
 	input_border    = { "rgba(0,0,0,0.25)",       "rgba(255,255,255,0.25)" },
