@@ -1,0 +1,74 @@
+name: Cleanup Releases
+
+# 定时清理包仓库中超过保留天数的 Release。
+# 包仓库每次构建都会发布一个 Release（含 apk/ipk 附件），长期累积会
+# 撑大仓库体积并让 release 列表难以翻查。
+#
+# 手动触发：Actions 页面 -> Cleanup Releases -> Run workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '保留天数（Release 创建时间在此天数内的保留）'
+        required: false
+        default: '15'
+      keep-latest:
+        description: '额外保留最新的 N 个 Release（不受天数限制）'
+        required: false
+        default: '3'
+      dry-run:
+        description: '只打印不删除'
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    # 每天 UTC 03:30 = 北京时间 11:30
+    # 避开整点，减少与其它 workflow 同时段抢占 runner
+    - cron: '30 3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cleanup-releases
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Cleanup old releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cleanup releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_REPO: ${{ github.repository }}
+          DAYS: ${{ github.event.inputs.days || '15' }}
+          KEEP_LATEST: ${{ github.event.inputs.keep-latest || '3' }}
+          DRY: ${{ github.event.inputs.dry-run || 'false' }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$TARGET_REPO" --days "$DAYS" --keep-latest "$KEEP_LATEST")
+          if [ "$DRY" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          echo "清理目标: $TARGET_REPO  保留 $DAYS 天  额外保留最新 $KEEP_LATEST 个  dry-run=$DRY"
+          ./scripts/cleanup_releases.sh "${args[@]}"
+
+      - name: Summary
+        if: always()
+        env:
+          SUMMARY_REPO: ${{ github.repository }}
+          SUMMARY_DAYS: ${{ github.event.inputs.days || '15' }}
+          SUMMARY_KEEP: ${{ github.event.inputs.keep-latest || '3' }}
+        run: |
+          {
+            echo '### Release 清理结果'
+            echo
+            echo "- 仓库: $SUMMARY_REPO"
+            echo "- 保留天数: $SUMMARY_DAYS"
+            echo "- 额外保留最新: $SUMMARY_KEEP"
+          } >> "$GITHUB_STEP_SUMMARY"
