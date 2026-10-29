@@ -108,6 +108,34 @@ to_epoch() {
     date -u -d "$ts" +%s 2>/dev/null || date -u -d "${ts/T/ }" +%s 2>/dev/null || echo ""
 }
 
+# ---- 先逐个删除 release 附件 ----
+# 教训：附件极多的 release（如 v20260524 挂了 370+ 个 apk），
+# 直接调 DELETE /releases/{id} 会让 GitHub 后端 502（Server Error），
+# 因为它要在一个请求里清理全部附件。必须先把附件删干净再删 release。
+delete_assets() {
+    local rid="$1"
+    local -a aids=()
+    while IFS= read -r aid; do
+        [[ -n "$aid" ]] && aids+=("$aid")
+    done < <(gh api --paginate "repos/$REPO/releases/$rid/assets?per_page=100" --jq ".[].id" 2>/dev/null || true)
+
+    if [[ ${#aids[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    log "  含 ${#aids[@]} 个附件，先逐个清理（附件过多会让 release 直接删除返回 502）"
+    local aid attempt
+    for aid in "${aids[@]}"; do
+        for attempt in 1 2 3; do
+            if gh api -X DELETE "repos/$REPO/releases/assets/$aid" >/dev/null 2>&1; then
+                break
+            fi
+            sleep $(( attempt * 2 ))
+        done
+    done
+    log "  附件清理完成"
+}
+
 DELETED=0
 SKIPPED=0
 FAILED=0
@@ -150,14 +178,27 @@ while IFS=$'\t' read -r id tag created draft prerelease; do
         continue
     fi
 
+    # 附件多的 release 必须先清附件，否则 DELETE release 接口会 502
+    delete_assets "$id"
+
     args=(release delete "$tag" --repo "$REPO" --yes)
     if [[ $DELETE_TAGS -eq 1 ]]; then args+=(--cleanup-tag); fi
 
-    if gh "${args[@]}" 2>&1; then
+    deleted=0
+    for attempt in 1 2 3; do
+        if gh "${args[@]}" >/dev/null 2>&1; then
+            deleted=1
+            break
+        fi
+        log "  删除尝试 $attempt 失败（$(( attempt * 5 )) 秒后重试）"
+        sleep $(( attempt * 5 ))
+    done
+
+    if [[ $deleted -eq 1 ]]; then
         log "已删除: $tag"
         DELETED=$((DELETED + 1))
     else
-        log "删除失败: $tag"
+        log "删除失败: $tag（3 次重试均未成功）"
         FAILED=$((FAILED + 1))
     fi
 
