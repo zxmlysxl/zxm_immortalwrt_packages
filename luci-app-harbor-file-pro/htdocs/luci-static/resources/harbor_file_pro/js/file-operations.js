@@ -13,7 +13,7 @@
     }
 
     HF.thumbnail_url = function thumbnail_url(item) {
-        return HarborIO.thumbnailURL(item.path) +
+        return HF.file_io(item).thumbnailURL(item.path) +
             '&v=' + encodeURIComponent(String(item.size || 0) + '-' + String(item.mtime || 0));
     }
 
@@ -240,7 +240,7 @@
             return;
         }
         HF.state.archive_items = items;
-        HF.state.archive_target_dir = HF.state.current.path;
+        HF.state.archive_target_dir = (HF.state.current.device_id || '') === (items[0].device_id || '') ? HF.state.current.path : HF.parent_directory(items[0].path);
         document.getElementById('fm_archive_title').textContent = HF.labels.compress;
         document.getElementById('fm_archive_source').textContent =
             items.length === 1 ? items[0].path : HF.format_label(HF.labels.selected_items, items.length);
@@ -250,41 +250,45 @@
         document.getElementById('fm_archive_name').focus();
     }
 
-    HF.update_archive_task_view = function update_archive_task_view(data) {
+    HF.paint_archive_task = function paint_archive_task(data, find) {
         var task = data || {};
-        HF.state.archive_task = task;
         var creating = task.mode !== 'extract';
         var tool = task.missing_tool || '';
         var tool_missing = !!tool;
-        document.getElementById('fm_archive_task_title').textContent = tool_missing ?
+        find('fm_archive_task_title').textContent = tool_missing ?
             HF.labels.archive_command_missing :
             (task.done ?
                 (HF.task_unconfirmed(task) ? HF.labels.task_status_unknown :
                     (task.success ? (creating ? HF.labels.archive_created : HF.labels.archive_extracted) : HF.labels.archive_failed)) :
                 (creating ? HF.labels.creating_archive : HF.labels.extracting_archive));
-        document.getElementById('fm_archive_task_status').textContent = tool_missing ?
+        find('fm_archive_task_status').textContent = tool_missing ?
             HF.format_label(HF.labels.archive_tool_required, tool) :
             (task.message || (creating ? HF.labels.creating_archive : HF.labels.extracting_archive));
-        document.getElementById('fm_archive_task_path').textContent =
+        find('fm_archive_task_path').textContent =
             task.output_path || task.destination_path || task.path || '-';
-        document.getElementById('fm_archive_task_format').textContent = task.format || '-';
-        document.getElementById('fm_archive_task_exit').textContent =
+        find('fm_archive_task_format').textContent = task.format || '-';
+        find('fm_archive_task_exit').textContent =
             task.exit_code === undefined || task.exit_code === null ? '-' : String(task.exit_code);
         var command_line = task.command ? '$ ' + task.command : '';
         var log_text = task.log || '';
         if (command_line && log_text.indexOf(command_line) < 0)
             log_text = log_text ? command_line + '\n' + log_text : command_line;
-        document.getElementById('fm_archive_task_log').textContent = log_text || HF.labels.no_log_yet;
-        var install_button = document.getElementById('fm_archive_install_tool');
+        find('fm_archive_task_log').textContent = log_text || HF.labels.no_log_yet;
+        var install_button = find('fm_archive_install_tool');
         if (install_button) {
             install_button.style.display = tool_missing ? '' : 'none';
             if (tool_missing) {
                 install_button.textContent = HF.format_label(HF.labels.install_tool, tool);
             }
         }
-        document.getElementById('fm_archive_task_close').disabled = !task.done && !tool_missing;
-        document.getElementById('fm_archive_task_done').disabled = !task.done && !tool_missing;
+        find('fm_archive_task_close').disabled = !task.done && !tool_missing;
+        find('fm_archive_task_done').disabled = !task.done && !tool_missing;
     }
+
+    HF.update_archive_task_view = function(data) {
+        HF.state.archive_task = data || {};
+        HF.paint_archive_task(data, function(id) { return document.getElementById(id); });
+    };
 
     HF.task_unconfirmed = function task_unconfirmed(task) {
         return !!(task && task.done && task.state === 'unknown');
@@ -443,11 +447,12 @@
             output_name: output_name,
             target_dir: target_dir
         };
+        if (items[0].device_id) HF.close_file_dialog('fm_archive_dialog');
         function submit(overwrite) {
             if (overwrite) {
                 payload.overwrite = '1';
             }
-            HF.request_archive_write(HF.api.archive_create_start, payload, HF.start_archive_progress, function(res) {
+            HF.request_archive_write(HF.file_endpoint('archive_create_start', items[0]), payload, HF.start_archive_progress, function(res) {
                 if (res && res.code === 3) {
                     HF.confirm_window({
                         title: HF.labels.overwrite,
@@ -460,7 +465,7 @@
                     return;
                 }
                 if (res && res.code === 2 && res.data && res.data.missing_tool) {
-                    HF.close_modal();
+                    if (!res.data.device_id) HF.close_modal();
                     HF.show_archive_missing_tool(res, 'create');
                     return;
                 }
@@ -741,11 +746,13 @@
         HF.set_extract_hint(HF.labels.extract_loading);
         HF.open_modal('fm_extract_dialog');
         document.getElementById('fm_extract_target').focus();
-        HF.request_json(HF.api.list, { path: item.path }, function(data) {
+        HF.request_json(HF.file_endpoint('list', item), { path: item.path }, function(data) {
+            if (HF.state.extract_item !== item) return;
             HF.state.extract_truncated = !!data.truncated;
             HF.set_extract_hint(data.truncated ? HF.format_label(HF.labels.extract_truncated, (data.entries || []).length) : '');
             HF.set_extract_rows(data.entries || []);
         }, function(message) {
+            if (HF.state.extract_item !== item) return;
             HF.state.extract_truncated = false;
             HF.set_extract_rows([]);
             HF.set_extract_hint(HF.labels.extract_list_failed + (message ? ': ' + message : ''));
@@ -775,7 +782,7 @@
             if (overwrite) {
                 payload.overwrite = '1';
             }
-            HF.request_archive_write(HF.api.archive_extract_start, payload, HF.start_archive_progress, function(res) {
+            HF.request_archive_write(HF.file_endpoint('archive_extract_start', item), payload, HF.start_archive_progress, function(res) {
                 if (res && res.code === 3) {
                     HF.confirm_window({
                         title: HF.labels.overwrite,
@@ -788,7 +795,7 @@
                     return;
                 }
                 if (res && res.code === 2 && res.data && res.data.missing_tool) {
-                    HF.close_modal();
+                    if (res.data.device_id) HF.close_file_dialog('fm_extract_dialog'); else HF.close_modal();
                     HF.show_archive_missing_tool(res, 'extract');
                     return;
                 }
@@ -1093,7 +1100,7 @@
         if (!entry) {
             return '';
         }
-        return entry.kind === 'directory' ? 'directory:' + entry.path : entry.kind;
+        return entry.kind === 'directory' ? 'directory:' + (entry.device_id || '') + ':' + entry.path : entry.kind;
     }
 
     HF.push_history = function push_history(entry) {
@@ -1102,14 +1109,14 @@
             return;
         }
         HF.state.history = HF.state.history.slice(0, HF.state.history_index + 1);
-        HF.state.history.push({ kind: entry.kind, path: entry.path || '' });
+        HF.state.history.push({ kind: entry.kind, path: entry.path || '', device_id: entry.device_id || '' });
         HF.state.history_index = HF.state.history.length - 1;
         HF.update_toolbar();
     }
 
     HF.navigate = function navigate(entry, add_history) {
         if (entry.kind === 'directory') {
-            HF.open_path(entry.path, add_history);
+            HF.open_path(entry.path, add_history, null, entry.device_id || '');
         } else {
             HF.show_virtual(entry.kind, add_history);
         }
@@ -1602,7 +1609,7 @@
 
     HF.request_sha256 = function request_sha256(item, active) {
         var cache = HF.sha256_cache || (HF.sha256_cache = new Map());
-        var key = JSON.stringify([item.path, item.size, item.mtime]);
+        var key = JSON.stringify([item.device_id || "", item.device_revision || "", item.path, item.size, item.mtime]);
         var entry = cache.get(key);
         if (entry) {
             entry.watchers.push(active);
@@ -1617,7 +1624,7 @@
             }
             return new Promise(function(resolve, reject) {
                 HF.Util.ajax({
-                    url: HF.io || '/cgi-bin/harbor-io-pro',
+                    url: HF.file_io(item).requestURL('sha256', item.path),
                     type: 'GET',
                     cache: false,
                     dataType: 'json',
@@ -2211,10 +2218,11 @@
         return button;
     }
 
-    HF.bookmark_index = function bookmark_index(path) {
+    HF.bookmark_index = function bookmark_index(path, device_id) {
+        device_id = device_id === undefined ? (HF.state.current && HF.state.current.device_id || '') : device_id;
         var list = (HF.state.navigation && HF.state.navigation.bookmarks) || [];
         for (var i = 0; i < list.length; i++) {
-            if (list[i].path === path) {
+            if (list[i].path === path && (list[i].device_id || '') === device_id) {
                 return i;
             }
         }
@@ -2470,7 +2478,7 @@
         name.textContent = entry.label;
         var path = document.createElement('span');
         path.className = 'fm-fav-path';
-        path.textContent = entry.path;
+        path.textContent = (entry.device_name ? entry.device_name + ' · ' : '') + entry.path;
         copy.appendChild(name);
         copy.appendChild(path);
         main.appendChild(star);
@@ -2482,7 +2490,7 @@
             }
             HF.close_anchor_menus();
             if (entry.exists) {
-                HF.open_path(entry.path, true);
+                HF.open_path(entry.path, true, null, entry.device_id || '');
             } else {
                 HF.set_warning_status(HF.labels.unavailable + ': ' + entry.path);
             }
@@ -2675,6 +2683,7 @@
         var label = existing ? existing.label :
             (path === '/' ? '' : (HF.mount_point_name(path) || String(path).replace(/\/$/, '').split('/').pop() || path));
         HF.state.bookmark_editing = existing || null;
+        HF.state.bookmark_scope = existing ? existing.device_id || '' : from_favorites ? '' : HF.file_context().device_id;
         document.getElementById('fm_bookmark_title').textContent = existing ? HF.labels.edit_bookmark : HF.labels.add_bookmark;
         document.getElementById('fm_bookmark_label').value = label;
         document.getElementById('fm_bookmark_path').value = path;
@@ -2699,6 +2708,7 @@
             folder_only ? { name: folder } : {
                 label: label,
                 path: path,
+                device_id: HF.state.bookmark_scope || '',
                 folder: folder,
                 original_path: editing ? editing.path : ''
             },
@@ -2712,7 +2722,7 @@
     }
 
     HF.delete_bookmark = function delete_bookmark(entry) {
-        HF.request_write(HF.api.bookmark_delete, { path: entry.path },
+        HF.request_write(HF.api.bookmark_delete, { path: entry.path, device_id: entry.device_id || '' },
             HF.labels.bookmark_removed,
             function(data) {
                 HF.apply_bookmarks(data);
@@ -2748,7 +2758,7 @@
     }
 
     HF.move_bookmark = function move_bookmark(entry, direction) {
-        HF.request_write(HF.api.bookmark_move, { path: entry.path, direction: direction }, '',
+        HF.request_write(HF.api.bookmark_move, { path: entry.path, device_id: entry.device_id || '', direction: direction }, '',
             function(data) {
                 HF.apply_bookmarks(data);
             });
@@ -2761,7 +2771,7 @@
         }
         var index = HF.bookmark_index(path);
         if (index >= 0) {
-            HF.delete_bookmark({ path: path });
+            HF.delete_bookmark({ path: path, device_id: HF.file_context().device_id });
         }
         else {
             HF.open_bookmark_editor();
@@ -2844,21 +2854,40 @@
         node.addEventListener('touchcancel', cancel, { passive: true });
     }
 
+    HF.create_sidebar_section = function(sidebar, key, heading) {
+        var section = HF.Util.createElement('div', 'fm-nav-section fm-nav-section-' + key);
+        var list = HF.Util.createElement('div', 'fm-nav-list');
+        list.dataset.navList = key; list.tabIndex = 0;
+        list.setAttribute('role', 'group'); list.setAttribute('aria-label', heading.textContent);
+        heading.title = heading.textContent;
+        section.appendChild(heading); section.appendChild(list); sidebar.appendChild(section);
+        return list;
+    };
+    HF.add_sidebar_meta = function(button, text) {
+        var label = button.querySelector('.fm-nav-label');
+        var copy = HF.Util.createElement('div', 'fm-nav-drive-copy');
+        var meta = HF.Util.createElement('div', 'fm-nav-drive-meta', text);
+        button.replaceChild(copy, label); copy.appendChild(label); copy.appendChild(meta);
+        return meta;
+    };
+
     HF.render_sidebar = function render_sidebar() {
         var sidebar = document.getElementById('fm_sidebar');
+        var scrolls = Object.create(null), scrollLeft = sidebar.scrollLeft;
+        sidebar.querySelectorAll('.fm-nav-list').forEach(function(list) { scrolls[list.dataset.navList] = list.scrollTop; });
         HF.clear_node(sidebar);
         var quick_active = HF.state.current && HF.state.current.kind === 'quick_access';
         var quick_heading = HF.create_sidebar_button(HF.labels.quick_access, 'quick_access', 'fm-nav-heading' + (quick_active ? ' active' : ''), function() {
             HF.show_virtual('quick_access', true);
         });
-        sidebar.appendChild(quick_heading);
+        var quick_list = HF.create_sidebar_section(sidebar, 'quick', quick_heading);
 
         HF.state.navigation.quick_access.forEach(function(item) {
-            var active = HF.state.current && HF.state.current.kind === 'directory' && HF.state.current.path === item.path;
+            var active = HF.state.current && HF.state.current.kind === 'directory' && !HF.state.current.device_id && HF.state.current.path === item.path;
             var class_name = 'fm-nav-item' + (active ? ' active' : '') + (!item.exists ? ' disabled' : '');
             var button = HF.create_sidebar_button(item.name, item.icon || 'folder', class_name, function() {
                 if (item.exists) {
-                    HF.open_path(item.path, true);
+                    HF.open_path(item.path, true, null, '');
                 } else {
                     HF.set_warning_status(HF.labels.unavailable + ': ' + item.path);
                 }
@@ -2866,38 +2895,31 @@
             if (item.exists) {
                 HF.bind_drop_target(button, item.path, item.name);
             }
-            sidebar.appendChild(button);
+            quick_list.appendChild(button);
         });
 
-        var divider = document.createElement('div');
-        divider.className = 'fm-nav-divider';
-        sidebar.appendChild(divider);
         var pc_active = HF.state.current && HF.state.current.kind === 'this_pc';
         var pc_heading = HF.create_sidebar_button(HF.labels.this_pc, 'this_pc', 'fm-nav-heading' + (pc_active ? ' active' : ''), function() {
             HF.show_virtual('this_pc', true);
         });
-        sidebar.appendChild(pc_heading);
+        var drive_list = HF.create_sidebar_section(sidebar, 'local', pc_heading);
 
         HF.state.navigation.drives.forEach(function(drive) {
-            var active = HF.state.current && HF.state.current.kind === 'directory' && HF.state.current.path === drive.path;
+            var active = HF.state.current && HF.state.current.kind === 'directory' && !HF.state.current.device_id && HF.state.current.path === drive.path;
             var name = drive.path === '/' ? HF.labels.system_disk : drive.name;
             var button = HF.create_sidebar_button(name, 'drive', 'fm-nav-item fm-nav-drive' + (active ? ' active' : ''), function() {
-                HF.open_path(drive.path, true);
+                HF.open_path(drive.path, true, null, '');
             });
-            var image = button.querySelector('.fm-nav-icon');
-            var label = button.querySelector('.fm-nav-label');
-            var copy = document.createElement('div');
-            copy.className = 'fm-nav-drive-copy';
-            button.replaceChild(copy, label);
-            copy.appendChild(label);
-            var meta = document.createElement('div');
-            meta.className = 'fm-nav-drive-meta';
-            meta.textContent = HF.format_kb(drive.used_kb) + ' / ' + HF.format_kb(drive.total_kb);
-            copy.appendChild(meta);
+            HF.add_sidebar_meta(button, HF.format_kb(drive.used_kb) + ' / ' + HF.format_kb(drive.total_kb));
             button.title = drive.path;
             HF.bind_drop_target(button, drive.path, name);
-            sidebar.appendChild(button);
+            drive_list.appendChild(button);
         });
+        if (HF.append_remote_navigation) HF.append_remote_navigation(sidebar);
+        sidebar.querySelectorAll('.fm-nav-list').forEach(function(list) {
+            list.scrollTop = scrolls[list.dataset.navList] || 0;
+        });
+        sidebar.scrollLeft = scrollLeft;
     }
 
     
@@ -2937,7 +2959,11 @@
         }
     };
 
-    HF.request_detect_type = function request_detect_type(path, on_resolved) {
+    HF.request_detect_type = function request_detect_type(path, on_resolved, owner) {
+        if (owner && owner.device_id) {
+            HF.request_json(HF.file_endpoint('detect_type', owner), { path: path }, function(data) { if (on_resolved) on_resolved(data.type || 'binary'); }, function() { if (on_resolved) on_resolved('binary'); });
+            return;
+        }
         if (!path) {
             if (on_resolved) { on_resolved('binary'); }
             return;
@@ -2967,10 +2993,11 @@
         });
     };
 
-    HF.open_link_target = function open_link_target(path) {
-        HF.request_json(HF.api.detect_type, { path: path }, function(data) {
+    HF.open_link_target = function open_link_target(path, owner) {
+        owner = owner || HF.file_context();
+        HF.request_json(HF.file_endpoint('detect_type', owner), { path: path }, function(data) {
             if (data && data.type === 'directory') {
-                HF.open_path(path, true);
+                HF.open_path(path, true, null, owner.device_id || '');
                 return;
             }
             var name = String(path).replace(/.*\//, '') || path;
@@ -3016,7 +3043,7 @@
         });
         HF.sync_item_checkbox(checkbox, HF.is_item_selected(item));
         node.appendChild(checkbox);
-        var cached_type = HF.state.detected_types[item.path];
+        var cached_type = !item.device_id && HF.state.detected_types[item.path];
         if (cached_type) {
             item.preview = cached_type === 'text' ? 'text' : 'binary';
             if (cached_type === 'text') {
@@ -3075,7 +3102,7 @@
             link_line.addEventListener('click', function(event) {
                 event.preventDefault();
                 event.stopPropagation();
-                HF.open_link_target(item.link_target.path);
+                HF.open_link_target(item.link_target.path, item);
             });
         }
         var meta = document.createElement('div');
@@ -3196,7 +3223,7 @@
                 ''
             );
             HF.set_button_state('fm_menu_move_to', !can_modify, modify_reason || system_reason);
-            if (modify_reason || system_reason) {
+            if (!item.device_id && (modify_reason || system_reason)) {
                 HF.set_write_block_status(modify_reason || system_reason);
             }
             HF.show_context_menu('fm_item_menu', event.clientX, event.clientY);
@@ -3224,7 +3251,7 @@
                         type: item.type,
                         name: item.name,
                         items: items.map(function(entry) {
-                            return { path: entry.path, type: entry.type, name: entry.name };
+                            return { path: entry.path, type: entry.type, name: entry.name, device_id: entry.device_id || '', device_revision: entry.device_revision || '' };
                         })
                     }));
                 }
@@ -3236,7 +3263,7 @@
             });
         }
         if (item.type === 'directory') {
-            HF.bind_drop_target(node, item.path, item.name);
+            HF.bind_drop_target(node, item.path, item.name, item);
         }
         if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
             var touchTimer = null;
@@ -3373,7 +3400,7 @@
                         var targetPath = dropTarget && dropTarget._fmItem && dropTarget._fmItem.type === 'directory' ?
                             dropTarget._fmItem.path : null;
                         if (targetPath && HF.can_move_to_path(targetPath)) {
-                            HF.confirm_drag_move(HF.state.drag_items, targetPath);
+                            HF.confirm_drag_move(HF.state.drag_items, targetPath, dropTarget._fmItem);
                         }
                     }
                     if (isDragging) {
@@ -3483,6 +3510,8 @@
     }
 
     HF.show_virtual = function show_virtual(kind, add_history) {
+        if (kind === 'remote_devices' && HF.show_remote_devices) return HF.show_remote_devices(add_history);
+        HF.navigation_request = (HF.navigation_request || 0) + 1;
         HF.clear_marquee();
         HF.hide_details();
         HF.state.current = { kind: kind };
@@ -3533,6 +3562,8 @@
         var is_package = !is_directory && item.preview === 'package';
         var package_label = is_package ? HF.package_type_label(item.ext) : '';
         return {
+            device_id: item.device_id || '',
+            device_revision: item.device_revision || '',
             name: item.name,
             path: item.path,
             type: item.type,
@@ -3693,7 +3724,7 @@
             thumb_button.className = 'fm-directory-action';
             thumb_button.textContent = HF.labels.generate_thumbnails + ' (' + image_count + ')';
             thumb_button.addEventListener('click', function() {
-                HF.start_thumbnail_generation(data.path);
+                HF.start_thumbnail_generation(data.path, data);
             });
             actions.appendChild(thumb_button);
             header.appendChild(actions);
@@ -3827,7 +3858,7 @@
         return Promise.all(jobs).then(function() { return files; });
     }
 
-    HF.handle_file_drop = function handle_file_drop(event, target_dir, target_label) {
+    HF.handle_file_drop = function handle_file_drop(event, target_dir, target_label, owner) {
         event.preventDefault();
         event.stopPropagation();
         HF.clear_drag_state();
@@ -3835,18 +3866,20 @@
             HF.set_write_block_status(HF.get_write_block_reason(target_dir) || HF.labels.system_folder_blocked);
             return;
         }
+        owner = HF.file_context(owner);
         HF.collect_drop_files(event.dataTransfer).then(function(files) {
-            HF.begin_upload(files, target_dir, target_label);
+            HF.begin_upload(files, target_dir, target_label, owner);
         }).catch(function() { HF.set_error_status(HF.labels.upload_failed); });
     }
 
-    HF.confirm_drag_move = function confirm_drag_move(items, target_dir) {
+    HF.confirm_drag_move = function confirm_drag_move(items, target_dir, owner) {
+        owner = HF.file_context(owner);
         items = HF.normalize_item_list(items);
         if (!items.length || !target_dir) {
             return;
         }
         for (var i = 0; i < items.length; i++) {
-            if (target_dir === items[i].path || HF.parent_directory(items[i].path) === target_dir) {
+            if ((items[i].device_id || '') === owner.device_id && (target_dir === items[i].path || HF.parent_directory(items[i].path) === target_dir)) {
                 HF.set_warning_status(HF.labels.move_item_same);
                 return;
             }
@@ -3859,12 +3892,14 @@
             message: confirm_text
         }).then(function(ok) {
             if (ok) {
-                HF.run_batch_transfer('move', items, target_dir);
+                if (items[0].device_id || owner.device_id) HF.run_remote_transfer('move', items, { source_device: items[0].device_id || '', source_revision: items[0].device_revision || '', target_device: owner.device_id, target_revision: owner.device_revision, target_dir: target_dir });
+                else HF.run_batch_transfer('move', items, target_dir);
             }
         });
     }
 
-    HF.bind_drop_target = function bind_drop_target(node, path, label) {
+    HF.bind_drop_target = function bind_drop_target(node, path, label, owner) {
+        owner = HF.file_context(owner || { device_id: '', device_revision: '', path: path });
         node.addEventListener('dragenter', function(event) {
             if (HF.is_internal_drag(event) && HF.can_move_to_path(path)) {
                 event.preventDefault();
@@ -3904,11 +3939,11 @@
                 HF.state.drag_item = null;
                 HF.state.drag_items = [];
                 HF.clear_drag_state();
-                HF.confirm_drag_move(items, path);
+                HF.confirm_drag_move(items, path, owner);
                 return;
             }
             if (!HF.state.uploading && HF.can_upload_to_path(path) && HF.is_file_drag(event)) {
-                HF.handle_file_drop(event, path, label);
+                HF.handle_file_drop(event, path, label, owner);
             }
         });
     }
@@ -4204,7 +4239,8 @@
         HF.open_conflict_dialog();
     }
 
-    HF.begin_upload = function begin_upload(files, target_dir, target_label) {
+    HF.begin_upload = function begin_upload(files, target_dir, target_label, owner) {
+        owner = owner || HF.file_context();
         if (HF.state.uploading) {
             HF.set_warning_status(HF.labels.upload_busy);
             return;
@@ -4224,6 +4260,7 @@
         var total_size = files.reduce(function(total, file) { return total + Number(file.size || 0); }, 0);
         var batch = {
             files: files,
+            device_id: owner.device_id || '', device_revision: owner.device_revision || '',
             directories: HF.upload_directories(files),
             target_dir: target_dir,
             target_label: target_label,
@@ -4237,7 +4274,7 @@
         HF.set_upload_panel(HF.labels.uploading, HF.labels.upload_to + ': ' + target_dir, 0, '', 0, total_size);
 
         HF.Util.ajax({
-            url: HF.api.upload_check,
+            url: HF.file_endpoint('upload_check', batch),
             type: 'POST',
             dataType: 'json',
             data: {
@@ -4294,8 +4331,7 @@
             return;
         }
         HF.Util.ajax({
-            url: HF.api.upload + '?target_dir=' + encodeURIComponent(batch.target_dir) +
-                '&directory=1&relative_path=' + encodeURIComponent(directories[index]),
+            url: batch.device_id ? HF.file_io(batch).requestURL('api_upload', batch.target_dir, { rpc_action: 'upload', target_dir: batch.target_dir, directory: '1', relative_path: directories[index] }) : HF.api.upload + '?target_dir=' + encodeURIComponent(batch.target_dir) + '&directory=1&relative_path=' + encodeURIComponent(directories[index]),
             type: 'POST', dataType: 'json',
             success: function(res) {
                 if (!res || res.code !== 0) { HF.fail_upload_batch((res && res.message) || HF.labels.upload_failed); return; }
@@ -4323,7 +4359,8 @@
             '&overwrite=' + (conflict_map[HF.upload_relative_path(file)] ? '1' : '0') +
             '&preserve_permissions=' + (batch.preserve_permissions === false ? '0' : '1');
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', HF.api.upload + query, true);
+        xhr.open('POST', batch.device_id ? HF.file_io(batch).requestURL('api_upload', batch.target_dir, { rpc_action: 'upload', target_dir: batch.target_dir }) + query.replace('?', '&') : HF.api.upload + query, true);
+        if (batch.device_id) xhr.setRequestHeader('Content-Type', 'application/octet-stream');
         xhr.upload.onprogress = function(event) {
             var loaded = event.lengthComputable && event.total > 0 ? Number(file.size || 0) * event.loaded / event.total : 0;
             var percent = batch.total_size > 0 ? ((completed_bytes + loaded) / batch.total_size) * 100 : 0;
@@ -4352,7 +4389,7 @@
             HF.update_toolbar();
             HF.fail_upload_batch(HF.upload_failure_message(xhr));
         };
-        xhr.send(form_data);
+        xhr.send(batch.device_id ? file : form_data);
     }
 
     HF.upload_failure_message = function upload_failure_message(xhr) {
@@ -4369,10 +4406,12 @@
     }
 
     HF.refresh_after_write = function refresh_after_write(select_path) {
-        var current = HF.state.current ? { kind: HF.state.current.kind, path: HF.state.current.path } : null;
+        var current = HF.state.current ? { kind: HF.state.current.kind, path: HF.state.current.path, device_id: HF.state.current.device_id || '' } : null;
+        var request = HF.navigation_request;
         HF.refresh_navigation(function() {
+            if (request !== HF.navigation_request) return;
             if (current && current.kind === 'directory') {
-                HF.open_path(current.path, false, select_path);
+                HF.open_path(current.path, false, select_path, current.device_id);
             } else {
                 HF.show_virtual(current ? current.kind : 'quick_access', false);
             }
@@ -4384,7 +4423,7 @@
     }
 
     HF.open_name_dialog = function open_name_dialog(action, item) {
-        HF.state.name_action = { action: action, item: item || null };
+        HF.state.name_action = { action: action, item: item || null, location: HF.file_context() };
         var is_rename = action === 'rename';
         var is_create_file = action === 'create_file';
         var is_bm_folder_rename = action === 'bm_folder_rename';
@@ -4423,14 +4462,14 @@
             return;
         }
         if (action.action === 'rename') {
-            HF.request_write(HF.api.rename, { path: action.item.path, new_name: name }, HF.labels.rename_complete, HF.refresh_after_write);
+            HF.request_write(HF.file_endpoint('rename', action.item), { path: action.item.path, new_name: name }, HF.labels.rename_complete, HF.refresh_after_write);
             return;
         }
         if (action.action === 'create_file') {
-            HF.request_write(HF.api.create_file, { target_dir: HF.state.current.path, name: name }, HF.labels.file_created, HF.refresh_after_write);
+            HF.request_write(HF.file_endpoint('create_file', action.location), { target_dir: action.location.path, name: name }, HF.labels.file_created, HF.refresh_after_write);
             return;
         }
-        HF.request_write(HF.api.create_directory, { target_dir: HF.state.current.path, name: name }, HF.labels.folder_created, HF.refresh_after_write);
+        HF.request_write(HF.file_endpoint('create_directory', action.location), { target_dir: action.location.path, name: name }, HF.labels.folder_created, HF.refresh_after_write);
     }
 
     HF.open_delete_dialog = function open_delete_dialog(items) {
@@ -4476,12 +4515,15 @@
         document.getElementById('fm_target_path').setAttribute('aria-busy', 'true');
         HF.target_address_error('');
         function active() { return HF.state.target_picker === picker && HF.target_request === request; }
-        HF.request_json(HF.api.list, { path: path }, function(data) {
+        var load = picker.load || function(path, okay, failed) { HF.request_json(HF.api.list, { path: path }, okay, failed); };
+        load(path, function(data) {
             if (!active()) return;
             if (!data.path || !Array.isArray(data.items)) { failed(HF.labels.unavailable); return; }
             HF.state.target_path = data.path;
             HF.state.target_parent = data.parent;
             HF.state.target_has_operation_space = data.has_operation_space !== false;
+            picker.device_revision = data.device_revision || '';
+            if (picker.device_paths) picker.device_paths[picker.device_id || ''] = data.path;
             HF.render_target_address();
             finish();
             var list = document.getElementById('fm_target_list');
@@ -4498,7 +4540,7 @@
                 button.addEventListener('click', function() { HF.load_target_directory(item.path); });
                 list.appendChild(button);
             });
-        }, failed);
+        }, failed, active);
         function finish() {
             var current = HF.state.target_path;
             var reason = current ? HF.get_system_block_reason(current) ||
@@ -4507,9 +4549,9 @@
             document.getElementById('fm_target_up').disabled = !current || current === '/';
             document.getElementById('fm_target_path').setAttribute('aria-busy', 'false');
         }
-        function failed(message) {
+        function failed(message, stopFallback) {
             if (!active()) return;
-            if (fallback && !HF.state.target_path && path !== '/') { HF.load_target_directory(HF.parent_directory(path), true); return; }
+            if (fallback && !stopFallback && !HF.state.target_path && path !== '/') { HF.load_target_directory(HF.parent_directory(path), true); return; }
             finish();
             HF.target_address_error((message || HF.labels.request_failed) + ': ' + path);
         }
@@ -4532,6 +4574,7 @@
         HF.state.target_path = null;
         HF.state.target_parent = null;
         HF.state.target_has_operation_space = false;
+        if (HF.configure_target_devices) HF.configure_target_devices(options);
         HF.clear_node(document.getElementById('fm_target_list'));
         var address = document.getElementById('fm_target_path')._fmPathAddress;
         if (address) address.exit();
@@ -4552,7 +4595,10 @@
 
     HF.choose_archive_directory = function choose_archive_directory(kind) {
         var input = document.getElementById('fm_' + kind + '_target');
+        var owner = kind === 'archive' ? (HF.state.archive_items || [])[0] : HF.state.extract_item;
         HF.open_directory_picker({
+            device_id: owner && owner.device_id || '',
+            load: function(path, okay, failed) { HF.request_json(HF.file_endpoint('list', owner), { path: path }, okay, failed); },
             owner: 'fm_' + kind + '_dialog', source: document.getElementById('fm_' + kind + '_source').textContent,
             path: input.value.trim() || (HF.state.current && HF.state.current.path) || '/',
             accept: function(path) {
@@ -4637,7 +4683,7 @@
         if (!picker || !path || document.getElementById('fm_target_confirm').disabled) return;
         if (!HF.can_modify_system_path(path) || HF.state.target_has_operation_space === false) return;
         HF.close_target_dialog();
-        picker.accept(path);
+        picker.accept(path, picker.device_id || '', picker.device_revision || '');
     }
 
     HF.trigger_upload = function trigger_upload(target_dir, target_label, directory) {
@@ -4655,7 +4701,7 @@
             HF.set_warning_status(HF.labels.folder_not_supported);
             return;
         }
-        HF.state.upload_target = { path: target_dir, label: target_label };
+        HF.state.upload_target = Object.assign(HF.file_context(), { path: target_dir, label: target_label });
         input.value = '';
         input.click();
     }
@@ -4665,7 +4711,7 @@
             HF.set_error_status(HF.labels.download_failed);
             return;
         }
-        HarborIO.download(item.path, item.name || 'download');
+        HF.file_io(item).download(item.path, item.name || 'download');
     }
 
     HF.set_clipboard = function set_clipboard(mode, items) {
@@ -4676,12 +4722,15 @@
             return;
         }
         HF.state.clipboard = {
+            device_id: HF.state.current && HF.state.current.device_id || '',
+            device_revision: HF.state.current && HF.state.current.device_revision || '',
             mode: mode,
             items: items.map(function(item) {
                 return {
                     path: item.path,
                     name: item.name,
-                    type: item.type
+                    type: item.type,
+                    is_symlink: !!item.is_symlink
                 };
             })
         };
@@ -4724,6 +4773,7 @@
     }
 
     HF.run_paste = function run_paste(target_path) {
+        if (HF.run_remote_paste && ((HF.state.current && HF.state.current.device_id) || (HF.state.clipboard && HF.state.clipboard.device_id))) return HF.run_remote_paste(target_path);
         if (!HF.has_clipboard()) {
             HF.set_warning_status(HF.labels.clipboard_empty);
             return;
@@ -4763,7 +4813,9 @@
         });
     }
 
-    HF.showPasteConflictDialog = function showPasteConflictDialog(conflicts, action, items, target_path) {
+    HF.showPasteConflictDialog = function showPasteConflictDialog(conflicts, action, items, target_path, adapter) {
+        var check = adapter ? adapter.check : HF.check_paste_transfer;
+        var execute = adapter ? adapter.execute : HF.executePaste;
         var counts = new Map();
         conflicts.forEach(function(item) { counts.set(item.name, (counts.get(item.name) || 0) + 1); });
         HF.render_conflict_choices(conflicts.map(function(item) {
@@ -4772,8 +4824,8 @@
                 title: item.path || item.name, directory: (item.type || (source && source.type)) === 'directory' && !(source && source.is_symlink) };
         }), function(entry, done, failed) {
             var source = items.find(function(item) { return item.path === entry.key || item.name === entry.key; });
-            HF.check_paste_transfer({ tree_path: source ? source.path : entry.key }, function(data) {
-                done((data.children || []).map(function(item) { return { key: item.path, label: item.name, title: item.path, directory: item.type === 'directory' }; }));
+            check({ tree_path: source ? source.path : entry.key }, function(data) {
+                done((data.children || []).map(function(item) { return { key: item.path, label: item.name, title: item.path, directory: item.type === 'directory' && !item.is_symlink }; }));
             }, failed);
         });
         var list = document.getElementById('fm_conflict_list');
@@ -4804,7 +4856,7 @@
             selected = selected || selection(conflict_action);
             var preserve = document.getElementById('fm_preserve_permissions').checked;
             HF.close_modal();
-            HF.executePaste(action, selected.included, target_path, conflict_action, names, preserve, selected.skipped, selected.excluded);
+            execute(action, selected.included, target_path, conflict_action, names, preserve, selected.skipped, selected.excluded);
         }
         function set_mode(value) {
             renaming = value;
@@ -4829,7 +4881,7 @@
             set_mode(true);
             renameBtn.disabled = true;
             error('');
-            HF.check_paste_transfer({
+            check({
                 sources: JSON.stringify(items.map(function(item) { return item.path; })),
                 target_dir: target_path, suggest_rename: '1'
             }, function(data) {
@@ -4881,7 +4933,7 @@
             renameBtn.disabled = true;
             HF.set_conflict_busy(true);
             error('');
-            HF.check_paste_transfer({
+            check({
                 sources: JSON.stringify(selected.included.map(function(item) { return item.path; })),
                 target_dir: target_path, rename_map: JSON.stringify(names)
             }, function() {
@@ -4968,22 +5020,24 @@
         }
     }
 
+    HF.package_install_fields = function(task, item) {
+        return {
+            title: task.done ? (HF.task_unconfirmed(task) ? HF.labels.task_status_unknown : (task.success ? HF.labels.install_success : HF.labels.install_failed)) : HF.labels.installing_package,
+            status: task.message || (task.done ? (task.success ? HF.labels.install_success : HF.labels.install_failed) : HF.labels.install_running),
+            name: item ? item.name : (task.package_name || (task.path || '-').split('/').pop()),
+            path: task.path || task.package_name || '-',
+            type: HF.package_type_label(task.package_type),
+            installer: task.installer || '-',
+            exit: task.exit_code === undefined || task.exit_code === null ? '-' : String(task.exit_code),
+            log: task.log || HF.labels.no_log_yet
+        };
+    }
+
     HF.update_package_install_view = function update_package_install_view(data) {
         var task = data || {};
         HF.state.install_task = task;
-        document.getElementById('fm_package_install_title').textContent = task.done ?
-            (HF.task_unconfirmed(task) ? HF.labels.task_status_unknown :
-                (task.success ? HF.labels.install_success : HF.labels.install_failed)) :
-            HF.labels.installing_package;
-        document.getElementById('fm_package_install_status').textContent = task.message || HF.labels.install_running;
-        document.getElementById('fm_package_install_name').textContent =
-            HF.state.install_item ? HF.state.install_item.name : (task.package_name || (task.path || '-').split('/').pop());
-        document.getElementById('fm_package_install_path').textContent = task.path || task.package_name || '-';
-        document.getElementById('fm_package_install_type').textContent = HF.package_type_label(task.package_type);
-        document.getElementById('fm_package_install_installer').textContent = task.installer || '-';
-        document.getElementById('fm_package_install_exit').textContent =
-            task.exit_code === undefined || task.exit_code === null ? '-' : String(task.exit_code);
-        document.getElementById('fm_package_install_log').textContent = task.log || HF.labels.no_log_yet;
+        var fields = HF.package_install_fields(task, HF.state.install_item);
+        Object.keys(fields).forEach(function(key) { document.getElementById('fm_package_install_' + key).textContent = fields[key]; });
         document.getElementById('fm_package_install_close').disabled = !task.done;
         document.getElementById('fm_package_install_done').disabled = !task.done;
     }
@@ -5046,29 +5100,33 @@
         }
     }
 
-    HF.update_thumbnail_view = function update_thumbnail_view(data) {
+    HF.paint_thumbnail_task = function paint_thumbnail_task(data, find) {
         var task = data || {};
-        HF.state.thumbnail_task = task;
         var total = Number(task.total || 0);
         var processed = Number(task.processed || 0);
         var percent = total > 0 ? Math.max(0, Math.min(100, Math.round(processed * 100 / total))) : 0;
         var tool_missing = task.missing_tool === 'gm' || task.dependency_missing === true;
-        document.getElementById('fm_thumbnail_title').textContent = tool_missing ?
+        find('fm_thumbnail_title').textContent = tool_missing ?
             HF.labels.thumbnail_tool_required :
             (task.done ? (task.success ? HF.labels.thumbnail_success : HF.labels.thumbnail_failed) : HF.labels.generating_thumbnails);
-        document.getElementById('fm_thumbnail_status').textContent = task.message || HF.labels.generating_thumbnails;
-        document.getElementById('fm_thumbnail_progress_bar').style.width = percent + '%';
-        document.getElementById('fm_thumbnail_path').textContent = task.path || '-';
-        document.getElementById('fm_thumbnail_current').textContent = task.current_file || '-';
-        document.getElementById('fm_thumbnail_progress_text').textContent = processed + ' / ' + total + ' (' + percent + '%)';
-        document.getElementById('fm_thumbnail_success').textContent = String(task.success_count || 0);
-        document.getElementById('fm_thumbnail_cached').textContent = String(task.cached_count || 0);
-        document.getElementById('fm_thumbnail_failed').textContent = String(task.failed_count || 0);
-        document.getElementById('fm_thumbnail_log').textContent = task.log || HF.labels.no_log_yet;
-        document.getElementById('fm_thumbnail_install_tool').style.display = tool_missing ? '' : 'none';
-        document.getElementById('fm_thumbnail_close').disabled = !task.done && !tool_missing;
-        document.getElementById('fm_thumbnail_done').disabled = !task.done && !tool_missing;
+        find('fm_thumbnail_status').textContent = task.message || HF.labels.generating_thumbnails;
+        find('fm_thumbnail_progress_bar').style.width = percent + '%';
+        find('fm_thumbnail_path').textContent = task.path || '-';
+        find('fm_thumbnail_current').textContent = task.current_file || '-';
+        find('fm_thumbnail_progress_text').textContent = processed + ' / ' + total + ' (' + percent + '%)';
+        find('fm_thumbnail_success').textContent = String(task.success_count || 0);
+        find('fm_thumbnail_cached').textContent = String(task.cached_count || 0);
+        find('fm_thumbnail_failed').textContent = String(task.failed_count || 0);
+        find('fm_thumbnail_log').textContent = task.log || HF.labels.no_log_yet;
+        find('fm_thumbnail_install_tool').style.display = tool_missing ? '' : 'none';
+        find('fm_thumbnail_close').disabled = !task.done && !tool_missing;
+        find('fm_thumbnail_done').disabled = !task.done && !tool_missing;
     }
+
+    HF.update_thumbnail_view = function(data) {
+        HF.state.thumbnail_task = data || {};
+        HF.paint_thumbnail_task(data, function(id) { return document.getElementById(id); });
+    };
 
     HF.poll_thumbnail_generation = function poll_thumbnail_generation(task_id) {
         HF.stop_thumbnail_poll();
@@ -5211,7 +5269,7 @@
         if (!HF.state.open_type_map) {
             HF.state.open_type_map = {};
         }
-        HF.state.open_type_map[item.path] = open_type;
+        HF.state.open_type_map[HF.file_key(item)] = open_type;
         if (HF.api.save_preferences && HF.Util && HF.Util.ajax) {
             HF.Util.ajax({
                 url: HF.api.save_preferences,
@@ -5228,7 +5286,7 @@
         if (!item) return;
 
         if (item.type === 'directory') {
-            HF.open_path(item.path, true);
+            HF.open_path(item.path, true, null, item.device_id || '');
             return;
         }
 
@@ -5240,7 +5298,7 @@
             if (force_preview === 'hex') { HF.open_binary(item); return; }
         }
 
-        var saved_type = HF.state.open_type_map && HF.state.open_type_map[item.path];
+        var saved_type = HF.state.open_type_map && HF.state.open_type_map[HF.file_key(item)];
         if (saved_type) {
             if (saved_type === 'text') { HF.open_text(item); return; }
             if (saved_type === 'image') { HF.open_image(item); return; }
@@ -5291,7 +5349,7 @@
                 return;
             }
             HF.open_text(item);
-        });
+        }, item);
     }
 
     HF.open_with_hex = function open_with_hex(item) {
@@ -5303,14 +5361,17 @@
     }
 
     HF.refresh_current = function refresh_current() {
-        if (HF.state.current && HF.state.current.kind === 'directory') {
+        if (HF.state.current && HF.state.current.device_id) return HF.open_remote_path(HF.state.current.device_id, HF.state.current.path, false);
+        if (HF.state.current && HF.state.current.kind === 'remote_devices') return HF.show_remote_devices(false);
+        var current = HF.state.current, request = HF.navigation_request;
+        if (current && current.kind === 'directory') {
             HF.refresh_navigation(function() {
-                HF.open_path(HF.state.current.path, false);
+                if (request === HF.navigation_request) HF.open_path(current.path, false, null, '');
             });
             return;
         }
         HF.refresh_navigation(function() {
-            HF.show_virtual(HF.state.current ? HF.state.current.kind : 'quick_access', false);
+            if (request === HF.navigation_request) HF.show_virtual(current ? current.kind : 'quick_access', false);
         });
     }
 
@@ -5345,11 +5406,15 @@
         });
     };
 
-    HF.open_path = function open_path(path, add_history, select_path) {
+    HF.open_path = function open_path(path, add_history, select_path, device_id) {
+        device_id = device_id === undefined ? (HF.state.current && HF.state.current.device_id || '') : device_id;
+        if (device_id && HF.open_remote_path) return HF.open_remote_path(device_id, path, add_history, select_path);
+        var request = HF.navigation_request = (HF.navigation_request || 0) + 1;
         HF.clear_marquee();
         HF.hide_details();
         HF.request_json(HF.api.list, { path: path }, function(data) {
-            if (HF.state.sort_path && HF.state.sort_path !== data.path) {
+            if (request !== HF.navigation_request) return;
+            if ((HF.state.current && HF.state.current.device_id) || (HF.state.sort_path && HF.state.sort_path !== data.path)) {
                 HF.state.sort_path = '';
                 HF.state.sort_field = 'name';
                 HF.state.sort_order = 'asc';
@@ -5400,6 +5465,7 @@
     }
 
     HF.path_segments = function path_segments() {
+        if (HF.remote_path_segments) { var remote = HF.remote_path_segments(); if (remote) return remote; }
         if (!HF.state.current) return [];
         if (HF.state.current.kind === 'quick_access') return [{ label: HF.labels.quick_access, kind: 'quick_access' }];
         var crumbs = [{ label: HF.labels.this_pc, kind: 'this_pc' }];
@@ -5409,6 +5475,8 @@
     }
 
     HF.open_crumb = function open_crumb(crumb) {
+        if (crumb.kind === 'remote_devices') return HF.show_remote_devices(true);
+        if (crumb.device_id) return HF.open_remote_path(crumb.device_id, crumb.path, true);
         HF.close_anchor_menus();
         if (crumb.kind === 'this_pc') {
             HF.show_virtual('this_pc', true);
@@ -5451,8 +5519,61 @@
         body.setAttribute('aria-label', HF.labels.target_path);
         body.appendChild(crumbs);
         body.appendChild(input);
-        var editing = false, blur_timer;
+        var editing = false, blur_timer, drag = null, suppress_click = false;
+        crumbs.addEventListener('wheel', function(event) {
+            if (editing || event.ctrlKey || crumbs.scrollWidth <= crumbs.clientWidth) return;
+            var delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+            if (event.deltaMode === 1) delta *= 16;
+            else if (event.deltaMode === 2) delta *= crumbs.clientWidth;
+            var previous = crumbs.scrollLeft;
+            crumbs.scrollLeft += delta;
+            if (crumbs.scrollLeft !== previous) event.preventDefault();
+        }, { passive: false });
+        function end_drag(event) {
+            if (!drag || event && event.pointerId != null && event.pointerId !== drag.id) return;
+            var previous = drag;
+            drag = null;
+            if (previous.active) suppress_click = true;
+            crumbs.style.cursor = previous.cursor;
+            crumbs.style.userSelect = previous.select;
+            if (crumbs.hasPointerCapture(previous.id)) crumbs.releasePointerCapture(previous.id);
+            document.removeEventListener('pointermove', move_drag);
+            document.removeEventListener('pointerup', end_drag);
+            document.removeEventListener('pointercancel', end_drag);
+            window.removeEventListener('blur', end_drag);
+        }
+        function move_drag(event) {
+            if (!drag || event.pointerId !== drag.id) return;
+            if (!crumbs.isConnected || !(event.buttons & 1)) { end_drag(event); return; }
+            var delta = event.clientX - drag.x;
+            if (!drag.active) {
+                if (Math.abs(delta) < 6) return;
+                drag.active = true;
+                crumbs.setPointerCapture(drag.id);
+                crumbs.style.cursor = 'grabbing';
+            }
+            event.preventDefault();
+            crumbs.scrollLeft = drag.left - delta;
+        }
+        crumbs.addEventListener('pointerdown', function(event) {
+            suppress_click = false;
+            if (event.pointerType !== 'mouse' || event.button !== 0 || editing || crumbs.scrollWidth <= crumbs.clientWidth) return;
+            end_drag();
+            drag = { id: event.pointerId, x: event.clientX, left: crumbs.scrollLeft, active: false, cursor: crumbs.style.cursor, select: crumbs.style.userSelect };
+            crumbs.style.userSelect = 'none';
+            document.addEventListener('pointermove', move_drag, { passive: false });
+            document.addEventListener('pointerup', end_drag);
+            document.addEventListener('pointercancel', end_drag);
+            window.addEventListener('blur', end_drag);
+        });
+        crumbs.addEventListener('click', function(event) {
+            if (!suppress_click || !event.detail) return;
+            suppress_click = false;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }, true);
         function state(value) {
+            end_drag();
             editing = value;
             if (options.on_edit) options.on_edit(value);
             crumbs.style.display = value ? 'none' : 'inline-flex';
@@ -5474,6 +5595,7 @@
             input.select();
         }
         function refresh() {
+            end_drag();
             HF.clear_node(crumbs);
             options.segments().forEach(function(crumb, index) {
                 if (index) crumbs.appendChild(HF.Util.createElement('span', 'fm-crumb-separator', '›'));
@@ -5552,7 +5674,7 @@
             input_id: 'fm_target_input',
             value: function() { return HF.state.target_path || '/'; },
             editable: function() { return !!HF.state.target_picker; },
-            segments: function() { return HF.directory_segments(HF.state.target_path || '/', true); },
+            segments: function() { return HF.directory_segments(HF.state.target_path || '/', !(HF.state.target_picker && HF.state.target_picker.device_id)); },
             open_crumb: function(crumb) { HF.load_target_directory(crumb.path); },
             navigate: HF.load_target_directory,
             error: HF.target_address_error

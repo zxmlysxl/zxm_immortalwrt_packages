@@ -31,8 +31,18 @@
         };
     }
 
-    HF.resolve_terminal_url = function resolve_terminal_url(info) {
+    HF.resolve_terminal_url = function resolve_terminal_url(info, remote_host) {
         var raw = String(info && info.url || '').trim();
+        if (remote_host) {
+            var remote_protocol = Number(info && info.ssl) === 1 ? 'https:' : 'http:';
+            var remote_origin = remote_protocol + '//' + HF.format_host_for_url(remote_host);
+            if (raw) {
+                var remote_url = new URL(raw, remote_origin + '/');
+                if (!/^https?:$/.test(remote_url.protocol) || remote_url.hostname.toLowerCase() !== new URL(remote_origin).hostname.toLowerCase() || remote_url.username || remote_url.password) throw new Error(HF.labels.terminal_failed);
+                return remote_url.href;
+            }
+            return remote_origin + ':' + (Number(info && info.port) || 7681) + '/';
+        }
         var https_page = window.location.protocol === 'https:';
 
         if (raw) {
@@ -54,7 +64,7 @@
     };
 
     HF.set_settings_tab = function set_settings_tab(tab) {
-        var next_tab = tab === 'nginx' ? 'nginx' : 'basic';
+        var next_tab = ['basic', 'nginx', 'remote'].indexOf(tab) >= 0 ? tab : 'basic';
         var tabs = document.querySelectorAll('[data-settings-tab]');
         for (var i = 0; i < tabs.length; i++) {
             var active = tabs[i].getAttribute('data-settings-tab') === next_tab;
@@ -63,6 +73,8 @@
         }
         document.getElementById('fm_settings_panel_basic').classList.toggle('active', next_tab === 'basic');
         document.getElementById('fm_settings_panel_nginx').classList.toggle('active', next_tab === 'nginx');
+        document.getElementById('fm_settings_panel_remote').classList.toggle('active', next_tab === 'remote');
+        if (next_tab === 'remote' && HF.render_remote_settings) HF.render_remote_settings();
     }
 
     HF.render_nginx_settings = function render_nginx_settings() {
@@ -589,7 +601,21 @@
         window.open(url, '_blank', 'noopener');
     }
 
+    HF.close_package_install = function close_package_install() {
+        if (HF.state.install_task && !HF.state.install_task.done) return;
+        var dialog = document.getElementById('fm_package_install_dialog');
+        if (dialog._fmWindow && HF.window_manager) HF.window_manager.close(dialog._fmWindow);
+        else dialog.style.display = 'none';
+        HF.stop_install_poll();
+        HF.state.install_item = null;
+        HF.state.install_task = null;
+    }
+
     HF.close_modal = function close_modal() {
+        if (getComputedStyle(document.getElementById('fm_package_install_dialog')).display !== 'none') {
+            HF.close_package_install();
+            return;
+        }
         if (HF.state.nginx_installing &&
                 document.getElementById('fm_nginx_install_dialog').style.display !== 'none') {
             return;
@@ -677,7 +703,7 @@
             if (!active()) return;
             if (!pending.length) { show(true); return; }
             var path = pending.pop();
-            HF.request_json(HF.api.list, { path: path, directory_size: 1 }, function(data) {
+            HF.request_json(HF.file_endpoint('list', item), { path: path, directory_size: 1 }, function(data) {
                 if (!active()) return;
                 if (!visited.has(data.identity)) {
                     visited.add(data.identity);
@@ -749,7 +775,7 @@
             }
             save.disabled = true;
             HF.Util.ajax({
-                url: HF.api.chmod,
+                url: HF.file_endpoint('chmod', item),
                 type: 'POST',
                 data: { path: item.path, mode: newMode, recursive: directory && recursive.checked ? '1' : '0' },
                 dataType: 'json',
