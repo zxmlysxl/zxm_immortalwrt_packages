@@ -154,7 +154,7 @@
   }
   .fov .gcol > .fov .card > .fov .rows > .fov .row{flex:0 0 auto;}
 }
-.fov .gauge{position:relative;width:132px;height:132px;margin:0 auto}
+.fov .gauge{position:relative;width:152px;height:152px;margin:0 auto}
 .fov .gauge svg{transform:rotate(-90deg);display:block}
 .fov .gbg{fill:none;stroke:var(--line2);stroke-width:10}
 .fov .gfg{fill:none;stroke-width:10;stroke-linecap:round;transition:stroke-dashoffset 1.2s cubic-bezier(.22,1,.36,1)}
