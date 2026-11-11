@@ -497,74 +497,341 @@ set_elements() {
     nft list set inet znetcontrol "$1" 2>/dev/null |         sed -n 's/^[[:space:]]*elements = { \(.*\) }$/\1/p' | tr ',' ' '
 }
 
-# 解析 MAC 对应的终端 IP（IPv4 + IPv6）
-# 来源优先级：DHCP 租约 > ARP 表（仅有效条目）> IPv6 邻居表
-get_device_ips() {
-    mac="$1"
-    lower=$(echo "$mac" | tr '[:upper:]' '[:lower:]')
-    dash=$(echo "$lower" | tr ':' '-')
-    out=""
-    
-    out="$out $(cat /tmp/dhcp.leases 2>/dev/null | awk -v m="$lower" 'tolower($2)==m {print $3}')"
-    out="$out $(cat /tmp/dhcp.leases 2>/dev/null | awk -v m="$dash" 'tolower($2)==m {print $3}')"
-    out="$out $(cat /proc/net/arp 2>/dev/null | awk -v m="$lower" 'tolower($4)==m && $3=="0x2" {print $1}')"
-    out="$out $(ip -6 neigh show 2>/dev/null | awk -v m="$lower" '{for(i=1;i<=NF;i++) if(tolower($i)==m){print $1; break}}')"
-    
-    echo "$out" | tr ' ' '
-' |         grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F]*:[0-9a-fA-F:]+$' |         sort -u | tr '
-' ' '
+# ==========================================================
+# 2.3.13 修复：MAC -> IP 解析 与 nft 共享集合同步
+#
+# 缺陷②根因：
+#   1) get_device_ips 只查 /tmp/dhcp.leases 与 /proc/net/arp，
+#      纯 IPv6 设备（无任何 IPv4 租约）拿不到地址；
+#   2) ip -6 neigh 的 lladdr 字段位置不固定，原 awk 只在部分位置匹配；
+#   3) sync_mac_ip_sets 只写 ip_mac / ip6_mac，从不写 mac_forward /
+#      mac_input，导致"共享集合保底"永远是空集合；
+#   4) nft add element 的失败被 2>/dev/null 吞掉，日志却显示成功。
+# ==========================================================
+
+# 集合元素写入：失败一定写日志
+nft_set_add() {
+    _set="$1"; _elem="$2"
+    if nft_run add element inet znetcontrol "$_set" "{ $_elem }"; then
+        return 0
+    fi
+    log "ERROR: 写入集合 $_set 元素 [$_elem] 失败"
+    return 1
 }
 
-# 同步"由 MAC 规则派生出的终端 IP"到 nft 集合（源 IP 双保险）
-# 目的：终端即使更换/伪装源 MAC，只要 IP 没变仍会被拦截
-sync_mac_ip_sets() {
-    [ -n "$bin_nft" ] || return
-    desired=""
-    idx=0
+# 集合元素删除
+nft_set_del() {
+    _set="$1"; _elem="$2"
+    if nft_run delete element inet znetcontrol "$_set" "{ $_elem }"; then
+        return 0
+    fi
+    log "WARN: 删除集合 $_set 元素 [$_elem] 失败"
+    return 1
+}
+
+# 解析 MAC 对应的终端 IP（IPv4 + IPv6）
+# 来源（四源全取，缺一不可）：
+#   1) DHCP 租约：/tmp/dhcp.leases、/var/dhcp.leases、/tmp/dnsmasq.leases
+#      （MAC 写法兼容冒号与短横线两种）
+#   2) /proc/net/arp（只取 flags 0x2 的有效条目）
+#   3) ip -4 neigh show
+#   4) ip -6 neigh show（lladdr 可能在任意字段位置，逐字段整体比较）
+get_device_ips() {
+    mac="$1"
+    lower=$(echo "$mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    dash=$(echo "$lower" | tr ':' '-')
+    out=""
+
+    if [ -z "$lower" ]; then
+        return 0
+    fi
+
+    # 1) DHCP 租约
+    for _lf in /tmp/dhcp.leases /var/dhcp.leases /tmp/dnsmasq.leases; do
+        [ -f "$_lf" ] || continue
+        out="$out $(awk -v m="$lower" -v d="$dash" '{ t=tolower($2); if (t==m || t==d) print $3 }' "$_lf" 2>/dev/null)"
+    done
+
+    # 2) ARP 表（flags 0x2 = 有效条目）
+    if [ -f /proc/net/arp ]; then
+        out="$out $(awk -v m="$lower" 'tolower($4)==m && $3=="0x2" { print $1 }' /proc/net/arp 2>/dev/null)"
+    fi
+
+    # 3) IPv4 邻居表
+    out="$out $(ip -4 neigh show 2>/dev/null | awk -v m="$lower" '{ for (i=1;i<=NF;i++) if (tolower($i)==m) { print $1; break } }')"
+
+    # 4) IPv6 邻居表：逐字段整体比较，兼容 lladdr 位置不固定 + dev/STALE/REACHABLE 等 token
+    out="$out $(ip -6 neigh show 2>/dev/null | awk -v m="$lower" '{ for (i=1;i<=NF;i++) if (tolower($i)==m) { print $1; break } }')"
+
+    # 过滤：去掉 MAC 自身（形似 IPv6）、去掉 %zone 后缀、只保留合法 IP
+    echo "$out" | tr ' ' '\n' \
+        | sed -e 's/%.*$//' \
+        | grep -v -E '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$' \
+        | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[0-9a-fA-F]*:[0-9a-fA-F:]+$' \
+        | sort -u | tr '\n' ' '
+}
+
+# ==========================================================
+# 2.3.14：黑名单同步
+# 读取 uci 段 blacklist（字段：mac / ip / enable / comment / boost），
+# 写入 nft 集合 bl_mac / bl_ip / bl_ip6。与时间规则互不干扰。
+# ==========================================================
+sync_blacklist() {
+    _bl_idx=0
+    _bl_n=0
+    _bl_macs=""
+    _bl_ips=""
+    _bl_ip6s=""
+    _bl_boost=""
+
     while true; do
-    en=$(uci -q get "znetcontrol.@device[$idx].enable")
-    tg=$(uci -q get "znetcontrol.@device[$idx].target")
-        [ -z "$en" ] && [ -z "$tg" ] && break
-        if [ "$en" = "1" ] && is_mac_addr "$tg" && check_list "$idx"; then
-    mac=$(echo "$tg" | tr '[:upper:]' '[:lower:]')
-            desired="$desired $(get_device_ips "$mac")"
+        _en=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].enable")
+        _mac=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].mac")
+        _ip=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].ip")
+        _b6=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].ip6")
+        # 段结束判定：三个主字段都取不到
+        if [ -z "$_en" ] && [ -z "$_mac" ] && [ -z "$_ip" ] && [ -z "$_b6" ]; then
+            break
         fi
+        if [ "$_en" != "0" ] && [ "$_en" != "false" ] && [ "$_en" != "off" ]; then
+            if [ -n "$_mac" ]; then
+                _m=$(echo "$_mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+                if is_valid_mac "$_m"; then
+                    _bl_macs="$_bl_macs $_m"
+                    _bl_n=$((_bl_n + 1))
+                    [ "$(uci -q get "znetcontrol.@blacklist[$_bl_idx].boost")" = "1" ] && _bl_boost="$_bl_boost $_m"
+                else
+                    log "ERROR: 黑名单第 $_bl_idx 条 MAC 非法，已跳过: [$_mac]"
+                fi
+            fi
+            if [ -n "$_ip" ]; then
+                _bl_ips="$_bl_ips $_ip"
+                _bl_n=$((_bl_n + 1))
+            fi
+            if [ -n "$_b6" ]; then
+                _bl_ip6s="$_bl_ip6s $_b6"
+                _bl_n=$((_bl_n + 1))
+            fi
+        fi
+        _bl_idx=$((_bl_idx + 1))
+    done
+
+    # 集合不存在时（服务未 start）直接返回，不报错
+    if ! nft list set inet znetcontrol bl_mac >/dev/null 2>&1; then
+        dbg "黑名单集合不存在，跳过同步"
+        return 0
+    fi
+
+    # 全量重建（黑名单条目通常很少，重建比差分更可靠）
+    nft flush set inet znetcontrol bl_mac 2>/dev/null
+    nft flush set inet znetcontrol bl_ip 2>/dev/null
+    nft flush set inet znetcontrol bl_ip6 2>/dev/null
+
+    for _m in $_bl_macs; do
+        nft add element inet znetcontrol bl_mac "{ $_m }" 2>/dev/null || log "ERROR: 写入黑名单 MAC 失败: $_m"
+    done
+    for _a in $_bl_ips; do
+        nft add element inet znetcontrol bl_ip "{ $_a }" 2>/dev/null || log "ERROR: 写入黑名单 IP 失败: $_a"
+    done
+    for _a6 in $_bl_ip6s; do
+        nft add element inet znetcontrol bl_ip6 "{ $_a6 }" 2>/dev/null || log "ERROR: 写入黑名单 IPv6 失败: $_a6"
+    done
+
+    # 强力黑名单：额外在 input 链拦截（断访问路由器）
+    _del_rule_by_comment inet znetcontrol input "bl-mac-input-boost"
+    for _m in $_bl_boost; do
+        nft insert rule inet znetcontrol input ether saddr "$_m" counter drop comment "bl-mac-input-boost" 2>/dev/null
+    done
+
+    # 回读校验 + 状态落盘
+    # 注意：这里直接匹配 nft list set 的整段输出，而不是先解析 elements=，
+    # 因为不同 nft 版本的输出换行/格式有差异，先解析再比对容易产生
+    # "集合里明明有、却报失败"的假告警（历史上就吃过这种假信号的亏）。
+    _raw=$(nft list set inet znetcontrol bl_mac 2>/dev/null)
+    _stat="/var/run/$NAME.blacklist"
+    : > "$_stat"
+    for _m in $_bl_macs; do
+        case "$_raw" in
+            *"$_m"*) echo "OK $_m" >> "$_stat" ;;
+            *) echo "FAIL $_m" >> "$_stat"; log "ERROR: 黑名单 MAC $_m 回读失败（集合中未找到）" ;;
+        esac
+    done
+    # 反向校验：集合里是否有已从配置删除的残留
+    for _e in $(set_elements bl_mac); do
+        case " $_bl_macs " in
+            *" $_e "*) ;;
+            *) log "WARN: 集合 bl_mac 中残留未在配置里的元素: $_e" ;;
+        esac
+    done
+
+    info "黑名单已同步: $((_bl_n)) 条规则（MAC $(echo $_bl_macs | wc -w) / IPv4 $(echo $_bl_ips | wc -w) / IPv6 $(echo $_bl_ip6s | wc -w)，强力 $(echo $_bl_boost | wc -w)）"
+    return 0
+}
+
+# 打印黑名单当前状态（供界面/人工排查）
+sync_print_blacklist() {
+    echo "黑名单条目 | 状态"
+    echo "-------------------------"
+    if [ -f "/var/run/$NAME.blacklist" ]; then
+        cat "/var/run/$NAME.blacklist" 2>/dev/null
+    else
+        echo "（暂无记录，请先执行 znetcontrol blacklist-sync）"
+    fi
+    echo ""
+    echo "nft 集合 bl_mac 当前元素:"
+    nft list set inet znetcontrol bl_mac 2>/dev/null | sed -n 's/^.*elements = { \(.*\) }$/\1/p'
+}
+
+# 同步共享集合：
+#   生效期 + target 为 MAC 的规则
+#     -> MAC 的 IPv4 写入 ip_mac、IPv6 写入 ip6_mac（源 IP 双保险）
+#     -> MAC 本身写入 mac_forward（chain=input 时另写 mac_input）作为保底
+# 每一步失败都写日志，并记录"某规则为何没进集合"。
+sync_mac_ip_sets() {
+    if [ -z "$bin_nft" ]; then
+        log "WARN: sync_mac_ip_sets: 系统无 nft，跳过集合同步"
+        return 1
+    fi
+
+    want_v4=""
+    want_v6=""
+    want_mf=""
+    want_mi=""
+    n_mac_rules=0
+    n_skipped=0
+    idx=0
+    STAT_FILE="/var/run/$NAME.setstat"
+    : > "$STAT_FILE" 2>/dev/null
+
+    while [ "$idx" -lt 300 ]; do
+        en=$(uci -q get "znetcontrol.@device[$idx].enable")
+        tg=$(uci -q get "znetcontrol.@device[$idx].target")
+        if [ -z "$en" ] && [ -z "$tg" ]; then
+            break
+        fi
+        nm=$(get_rule_display_name "$idx")
+        why=""
+
+        if [ "$en" != "1" ]; then
+            why="未启用"
+            dbg "规则 $idx【$nm】未启用 -> 不进入任何集合"
+            n_skipped=$((n_skipped + 1))
+        elif ! is_mac_addr "$tg"; then
+            why="目标不是MAC"
+            dbg "规则 $idx【$nm】目标不是 MAC（$tg）-> 不参与 MAC 派生集合"
+            n_skipped=$((n_skipped + 1))
+        elif ! check_list "$idx"; then
+            why="不在生效时段"
+            dbg "规则 $idx【$nm】当前不在生效时段 -> MAC 不进入共享集合"
+            n_skipped=$((n_skipped + 1))
+        else
+            mac=$(echo "$tg" | tr '[:upper:]' '[:lower:]')
+            if ! is_valid_mac "$mac"; then
+                why="MAC非法"
+                log "ERROR: 规则 $idx【$nm】MAC 非法（$mac）-> 不进入集合"
+                n_skipped=$((n_skipped + 1))
+            else
+                n_mac_rules=$((n_mac_rules + 1))
+                ips=$(get_device_ips "$mac")
+                if [ -z "$(echo $ips)" ]; then
+                    why="已入集合(无IP可派生)"
+                    log "INFO: 规则 $idx【$nm】MAC $mac 未解析到任何 IP（纯 IPv6 或当前不在线），MAC 保底仍生效"
+                else
+                    why="已入集合"
+                fi
+                for ip in $ips; do
+                    case "$ip" in
+                        *:*) want_v6="$want_v6 $ip" ;;
+                        *)   want_v4="$want_v4 $ip" ;;
+                    esac
+                done
+                # MAC 本身写入共享集合作为保底
+                want_mf="$want_mf $mac"
+                ch=$(config_t_get device chain "$idx" "forward")
+                [ "$ch" = "input" ] && want_mi="$want_mi $mac"
+                dbg "规则 $idx【$nm】MAC $mac 已进入共享集合，派生 IP: $ips"
+            fi
+        fi
+
+        echo "$idx|$nm|$tg|$why" >> "$STAT_FILE" 2>/dev/null
         idx=$((idx + 1))
     done
+
     cur_v4=$(set_elements ip_mac)
     cur_v6=$(set_elements ip6_mac)
-    
-    for ip in $cur_v4; do
-        case " $desired " in
-            *" $ip "*) ;;
-            *) nft_run delete element inet znetcontrol ip_mac "{ $ip }" ;;
-        esac
+    cur_mf=$(set_elements mac_forward)
+    cur_mi=$(set_elements mac_input)
+
+    # 先清理不再需要的元素
+    for e in $cur_v4; do
+        case " $want_v4 " in *" $e "*) ;; *) nft_set_del ip_mac "$e" ;; esac
     done
-    for ip in $cur_v6; do
-        case " $desired " in
-            *" $ip "*) ;;
-            *) nft_run delete element inet znetcontrol ip6_mac "{ $ip }" ;;
-        esac
+    for e in $cur_v6; do
+        case " $want_v6 " in *" $e "*) ;; *) nft_set_del ip6_mac "$e" ;; esac
     done
-    
-    for ip in $desired; do
-        case "$ip" in
-            *:*)
-                case " $cur_v6 " in
-                    *" $ip "*) ;;
-                    *) nft_run add element inet znetcontrol ip6_mac "{ $ip }" ;;
-                esac
-                ;;
-            *)
-                case " $cur_v4 " in
-                    *" $ip "*) ;;
-                    *) nft_run add element inet znetcontrol ip_mac "{ $ip }" ;;
-                esac
-                ;;
-        esac
+    for e in $cur_mf; do
+        case " $want_mf " in *" $e "*) ;; *) nft_set_del mac_forward "$e" ;; esac
     done
-    
-    dbg "同步派生IP完成: $desired"
+    for e in $cur_mi; do
+        case " $want_mi " in *" $e "*) ;; *) nft_set_del mac_input "$e" ;; esac
+    done
+
+    # 再写入需要的元素
+    for e in $want_v4; do
+        case " $cur_v4 " in *" $e "*) ;; *) nft_set_add ip_mac "$e" ;; esac
+    done
+    for e in $want_v6; do
+        case " $cur_v6 " in *" $e "*) ;; *) nft_set_add ip6_mac "$e" ;; esac
+    done
+    for e in $want_mf; do
+        case " $cur_mf " in *" $e "*) ;; *) nft_set_add mac_forward "$e" ;; esac
+    done
+    for e in $want_mi; do
+        case " $cur_mi " in *" $e "*) ;; *) nft_set_add mac_input "$e" ;; esac
+    done
+
+    # 集合实际内容复核（写完立刻回读，确认真的进去了）
+    now_v4=$(set_elements ip_mac)
+    now_v6=$(set_elements ip6_mac)
+    now_mf=$(set_elements mac_forward)
+    now_mi=$(set_elements mac_input)
+
+    for e in $want_v4; do
+        case " $now_v4 " in *" $e "*) ;; *) log "ERROR: IP $e 期望进入 ip_mac，但回读集合里没有" ;; esac
+    done
+    for e in $want_v6; do
+        case " $now_v6 " in *" $e "*) ;; *) log "ERROR: IPv6 $e 期望进入 ip6_mac，但回读集合里没有" ;; esac
+    done
+    for e in $want_mf; do
+        case " $now_mf " in *" $e "*) ;; *) log "ERROR: MAC $e 期望进入 mac_forward，但回读集合里没有" ;; esac
+    done
+    for e in $want_mi; do
+        case " $now_mi " in *" $e "*) ;; *) log "ERROR: MAC $e 期望进入 mac_input，但回读集合里没有" ;; esac
+    done
+
+    # 只在集合内容变化时打 INFO，避免 ctrl 每 30 秒刷屏
+    sig="v4:$want_v4|v6:$want_v6|mf:$want_mf|mi:$want_mi"
+    oldsig=""
+    [ -f "/var/run/$NAME.setsig" ] && oldsig=$(cat "/var/run/$NAME.setsig" 2>/dev/null)
+    if [ "$sig" != "$oldsig" ]; then
+        info "集合同步完成: 生效MAC规则 $n_mac_rules 条 | 派生IPv4 $(echo $want_v4 | wc -w) 个 | 派生IPv6 $(echo $want_v6 | wc -w) 个 | 共享集合MAC $(echo $want_mf | wc -w) 个 | 跳过 $n_skipped 条"
+        echo "$sig" > "/var/run/$NAME.setsig" 2>/dev/null
+    fi
+
+    dbg "同步派生IP完成: v4=$want_v4 v6=$want_v6 mf=$want_mf mi=$want_mi"
+    return 0
+}
+
+# 打印每条规则为何（没）进入共享集合 —— 供人工排查与界面调用
+sync_print_stat() {
+    f="/var/run/$NAME.setstat"
+    if [ ! -f "$f" ]; then
+        echo "（暂无统计，请先执行 znetcontrol sync）"
+        return 0
+    fi
+    echo "规则ID | 规则名 | 目标 | 状态"
+    echo "---------------------------------------------"
+    cat "$f" 2>/dev/null
 }
 
 init_main_route() {
@@ -595,14 +862,16 @@ init_main_route() {
         nft_run add set inet znetcontrol mac_forward "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_forward 失败"
         nft_run add set inet znetcontrol mac_input "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_input 失败"
         # IP 集合：ip_forward/ip_input 来自"按 IP 管控"的规则
-        nft add set inet znetcontrol ip_forward "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
-        nft add set inet znetcontrol ip_input "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
-        nft add set inet znetcontrol ip6_forward "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
-        nft add set inet znetcontrol ip6_input "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+        nft_run add set inet znetcontrol ip_forward "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_forward 失败"
+        nft_run add set inet znetcontrol ip_input "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_input 失败"
+        nft_run add set inet znetcontrol ip6_forward "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_forward 失败"
+        nft_run add set inet znetcontrol ip6_input "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_input 失败"
+
         # IP 双保险集合：由 MAC 规则实时解析出的终端 IP 单独存放，
         # 便于精确回收，不会误删"按 IP 管控"规则写入的地址
-        nft add set inet znetcontrol ip_mac "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
-        nft add set inet znetcontrol ip6_mac "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+        nft_run add set inet znetcontrol ip_mac "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_mac 失败"
+        nft_run add set inet znetcontrol ip6_mac "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_mac 失败"
+
         
         nft_run add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }" || log "ERROR: 创建 forward 链失败"
         # ether saddr 匹配同时覆盖 IPv4 / IPv6
@@ -625,6 +894,28 @@ init_main_route() {
         nft_run add rule inet znetcontrol input ether saddr @mac_input counter drop comment "block-mac-input" || log "ERROR: 保底规则 block-mac-input 创建失败"
         nft_run add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
         nft_run add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
+
+        # ==========================================================
+        # 2.3.14 新增：MAC / IP 黑名单（全天封禁）
+        #
+        # 与"时间规则"完全独立：
+        #   - 独立集合 bl_mac / bl_ip / bl_ip6，独立 comment（bl-mac / bl-ip）
+        #   - 不看时间、不看星期，写入即生效 24 小时
+        #   - 优先级高于时间规则（insert 到链首），随时可一键启停
+        #
+        # 安全约束（重要）：
+        #   - 只在本程序自建的 inet znetcontrol 表内增删规则
+        #   - 绝不修改 firewall.@defaults / 任何 zone 配置
+        #   - 规则全部是 drop（策略仍为 accept），写坏最多"黑名单不生效"，
+        #     不会出现"路由器自己上不了网"
+        # ==========================================================
+        nft_run add set inet znetcontrol bl_mac "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 bl_mac 失败"
+        nft_run add set inet znetcontrol bl_ip "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip 失败"
+        nft_run add set inet znetcontrol bl_ip6 "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip6 失败"
+        nft_run insert rule inet znetcontrol forward ether saddr @bl_mac counter drop comment "bl-mac-forward" || log "ERROR: 黑名单规则 bl-mac-forward 创建失败"
+        nft_run insert rule inet znetcontrol forward ip saddr @bl_ip counter drop comment "bl-ip-forward" || log "ERROR: 黑名单规则 bl-ip-forward 创建失败"
+        nft_run insert rule inet znetcontrol forward ip6 saddr @bl_ip6 counter drop comment "bl-ip6-forward" || log "ERROR: 黑名单规则 bl-ip6-forward 创建失败"
+        # 强力黑名单：连访问路由器本身也断（默认关闭，由 blacklist 段 boost=1 开启时会额外插入）
         
         # ==========================================================
         # 可选：网关钉扎（pin_gateway=1）
@@ -1092,6 +1383,7 @@ show_help() {
     echo "  4. MAC地址: 00:11:22:33:44:55"
     echo ""
     echo "用法: $0 {start|stop|add <id>|del <id>|check <id>|sync|status|help}"
+    echo "黑名单: $0 {blacklist-sync|blacklist-stat}"
     echo ""
     echo "配置: 编辑 /etc/config/znetcontrol"
     echo "日志: 查看 /var/log/znetcontrol.log"
@@ -1114,7 +1406,7 @@ list_type=$(uci -q get znetcontrol.settings.control_mode || echo "blacklist")
 case "$crrun" in
     "start")
         stop_timecontrol
-        echo -e "\n====== 启动 ZNetControl ======" >> "$LOG_FILE"
+        printf "\n====== 启动 ZNetControl ======\n" >> "$LOG_FILE"
         mkdir -p /var/log /var/run 2>/dev/null
         touch "$IDLIST" 2>/dev/null
         
@@ -1150,6 +1442,9 @@ case "$crrun" in
         info "发现启用规则: $(echo $enabled_ids | wc -w) 个"
         
         init_timecontrol
+
+        # 【2.3.14】初始化后同步黑名单（独立于时间规则）
+        sync_blacklist
         
         # ===== 【2.3.11-fix】只清理非法残留，不清空合法元素 =====
         # 上一版这里用 nft flush set 清空 mac_forward/mac_input，
@@ -1275,8 +1570,28 @@ case "$crrun" in
             detect_gateway_mode
         fi
         sync_mac_ip_sets
+        sync_blacklist
+        # 打印每条规则为何（没）进入共享集合
+        # 说明：znetcontrolctrl 定时调用时输出被重定向到 /dev/null，不刷日志；
+        #       手工执行 "znetcontrol sync" 可直接看到每条规则的状态
+        sync_print_stat
         ;;
     
+    "blacklist-sync")
+        # 【2.3.14】仅同步黑名单，供 LuCI 保存后立即生效（不动时间规则）
+        sync_blacklist
+        sync_print_blacklist
+        ;;
+
+    "blacklist-stat")
+        sync_print_blacklist
+        ;;
+
+    "syncstat")
+        # 打印每条规则为何（没）进入共享集合
+        sync_print_stat
+        ;;
+
     "status")
         show_status
         ;;
