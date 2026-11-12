@@ -77,6 +77,8 @@ if (document.readyState === 'loading') {
         </div>
     </fieldset>
     
+    <%= znc.rule_status_html() %>
+
     <div class="cbi-page-actions">
         <button class="cbi-button cbi-button-apply" onclick="restartService()">
             <%:重启服务%>
@@ -97,6 +99,7 @@ if (document.readyState === 'loading') {
 </div>
 
 <script>
+<%= znc.rule_status_js(luci.dispatcher.build_url("admin/control/znetcontrol/api/rule_status")) %>
 // 更快的状态刷新（修复PID显示bug）
 function refreshStatus(force = false) {
     const statusEl = document.getElementById('service-status');

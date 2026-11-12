@@ -26,14 +26,15 @@ if (document.readyState === 'loading') {
     
     <div class="table cbi-section-table" id="device-table">
         <div class="tr table-titles">
-            <div class="th" style="width: 20%;"><%:IP地址%></div>
-            <div class="th" style="width: 25%;"><%:MAC地址%></div>
-            <div class="th" style="width: 25%;"><%:主机名%></div>
-            <div class="th" style="width: 30%;"><%:管控状态%></div>
+            <div class="th" style="width: 15%;"><%:IP地址%></div>
+            <div class="th" style="width: 21%;"><%:IPv6地址%></div>
+            <div class="th" style="width: 19%;"><%:MAC地址%></div>
+            <div class="th" style="width: 14%;"><%:主机名%></div>
+            <div class="th" style="width: 30%;"><%:状态%></div>
         </div>
         <div id="device-list">
             <div class="tr placeholder">
-                <div class="td" colspan="4" style="text-align: center; padding: 30px;">
+                <div class="td" colspan="5" style="text-align: center; padding: 30px;">
                     <div class="loading-spinner"></div>
                     <p style="color: var(--znc-secondary-text); margin-top: 10px;"><%:正在加载设备列表...%></p>
                 </div>
@@ -76,7 +77,7 @@ function escapeForJs(str) {
 function refreshDevices() {
     const deviceList = document.getElementById('device-list');
     
-    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="4" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
+    deviceList.innerHTML = '<div class="tr placeholder"><div class="td" colspan="5" style="text-align: center; padding: 30px;"><div class="loading-spinner"></div><p style="margin-top: 10px;"><%:正在加载设备列表...%></p></div></div>';
     
     fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/get_devices")%>')
         .then(response => response.json())
@@ -85,7 +86,7 @@ function refreshDevices() {
             
             if (!devices || devices.length === 0) {
                 html = '<div class="tr">' +
-                       '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
+                       '<div class="td" colspan="5" style="text-align: center; padding: 40px;">' +
                        '<div class="empty-state">' +
                        '<i class="icon icon-devices" style="font-size: 48px; margin-bottom: 10px;"></i>' +
                        '<p style="margin: 0 0 10px 0;"><%:未找到在线设备%></p>' +
@@ -95,41 +96,67 @@ function refreshDevices() {
                        '</div>';
             } else {
                 devices.forEach(device => {
-                    const isConfigured = device.is_configured;
-                    const targetType = device.mac ? 'mac' : 'ip';
-                    const targetValue = device.mac || device.ip;
+                    // 兼容老字段缺失：新字段（online/ipv6/sources）一律做兜底
+                    const isConfigured = !!device.is_configured;
+                    const mac = device.mac || '';
+                    const ip = device.ip || '';
+                    const targetType = mac ? 'mac' : 'ip';
+                    const targetValue = mac || ip;
                     const hostname = device.hostname || '';
-                    
+                    const online = (device.online === undefined) ? true : !!device.online;
+                    const ipv6 = Array.isArray(device.ipv6) ? device.ipv6 : [];
+                    const sources = Array.isArray(device.sources) ? device.sources : [];
+                    const isBlacklisted = !!device.is_blacklisted;
+                    const blLabel = device.blacklist_label || '';
+
                     const safeTarget = escapeForJs(targetValue);
                     const safeHostname = escapeForJs(hostname);
-                    
-                    html += '<div class="tr device-row">';
-                    
-                    // IP地址列 - 使用固定宽度框
+
+                    html += '<div class="tr device-row' + (online ? '' : ' device-offline') + '">';
+
+                    // IP地址列（IPv4；纯 IPv6 设备标注）
                     html += '<div class="td ip-address-cell">' +
                            '<div class="ip-address-box">' +
-                           '<span class="ip-address-text">' + (device.ip || '未知') + '</span>' +
+                           '<span class="ip-address-text">' +
+                           (ip ? escapeForJs(ip) : (ipv6.length ? 'IPv6-only' : '未知')) +
+                           '</span>' +
                            '</div>' +
                            '</div>';
-                    
+
+                    // IPv6 地址列
+                    html += '<div class="td ipv6-address-cell">';
+                    if (ipv6.length) {
+                        html += '<div class="ipv6-list">' +
+                                ipv6.map(a => '<span class="ipv6-item">' + escapeForJs(a) + '</span>').join('') +
+                                '</div>';
+                    } else {
+                        html += '<span class="ipv6-none">—</span>';
+                    }
+                    if (sources.length) {
+                        html += '<div class="device-sources">来源：' + escapeForJs(sources.join('/')) + '</div>';
+                    }
+                    html += '</div>';
+
                     // MAC地址列
                     html += '<div class="td mac-address-cell">' +
                            '<div class="mac-address-box">' +
-                           '<span class="mac-address-text">' + (device.mac || '') + '</span>' +
+                           '<span class="mac-address-text">' + escapeForJs(mac) + '</span>' +
                            '</div>' +
                            '</div>';
-                    
+
                     // 主机名列
                     html += '<div class="td hostname-cell">' +
                            '<div class="device-hostname">' +
-                           (hostname || '<span>未知设备</span>') +
+                           (hostname ? escapeForJs(hostname) : '<span>未知设备</span>') +
                            '</div>' +
                            '</div>';
-                    
-                    // 管控状态列
+
+                    // 状态列：在线/离线 + 是否已配规则
                     html += '<div class="td status-cell">' +
                            '<div class="device-status">';
-                    
+                    html += '<div class="status-online ' + (online ? 'on' : 'off') + '">' +
+                           (online ? '在线' : '离线') + '</div>';
+
                     if (isConfigured) {
                         html += '<div class="status-container configured">' +
                                '<div class="status-icon">' +
@@ -147,7 +174,27 @@ function refreshDevices() {
                                '</button>' +
                                '</div>';
                     }
-                    
+
+                    // 黑名单状态：已加入则显示状态，未加入给按钮
+                    if (isBlacklisted) {
+                        html += '<div class="status-container bl-configured">' +
+                               '<div class="status-icon">' +
+                               '<i class="icon icon-block"></i>' +
+                               '</div>' +
+                               '<div class="status-content">' +
+                               '<div class="status-title bl-title">已加入黑名单</div>' +
+                               (blLabel ? '<div class="bl-label">' + escapeForJs(blLabel) + '</div>' : '') +
+                               '<div class="status-action" onclick="goToBlacklist()">点击管理黑名单</div>' +
+                               '</div>' +
+                               '</div>';
+                    } else {
+                        html += '<div class="status-container bl-not-configured">' +
+                               '<button class="add-bl-btn" onclick="addToBlacklist(\'' + targetType + '\', \'' + safeTarget + '\', \'' + safeHostname + '\')">' +
+                               '<i class="icon icon-block"></i> 加入黑名单' +
+                               '</button>' +
+                               '</div>';
+                    }
+
                     html += '</div></div></div>';
                 });
             }
@@ -158,7 +205,7 @@ function refreshDevices() {
         .catch(error => {
             console.error('获取设备列表失败:', error);
             deviceList.innerHTML = '<div class="tr">' +
-                '<div class="td" colspan="4" style="text-align: center; padding: 40px;">' +
+                '<div class="td" colspan="5" style="text-align: center; padding: 40px;">' +
                 '<div class="error-state">' +
                 '<i class="icon icon-alert-circle" style="font-size: 48px; color: var(--znc-danger-text); margin-bottom: 10px;"></i>' +
                 '<p style="color: var(--znc-danger-text); margin: 0 0 10px 0;"><%:加载失败%></p>' +
@@ -290,6 +337,81 @@ function goToRules() {
     window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>';
 }
 
+function goToBlacklist() {
+    window.location.href = '<%=luci.dispatcher.build_url("admin/control/znetcontrol/blacklist")%>';
+}
+
+// 加入黑名单：确认后调用后端 API
+function addToBlacklist(type, target, hostname) {
+    if (!target || target === '未知') {
+        showToast('无法加入，目标地址无效', 'error');
+        return;
+    }
+    const t = String(target).trim();
+    const h = String(hostname || '').trim();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-dialog-overlay';
+    overlay.innerHTML = `
+        <div class="confirm-dialog">
+            <div class="dialog-header">
+                <i class="icon icon-block" style="font-size: 24px; color: var(--znc-danger-text);"></i>
+                <h3 style="margin: 10px 0 5px 0;">加入黑名单</h3>
+            </div>
+            <div class="dialog-body">
+                <p>加入后该设备将<b>立即无法上网</b>（全天 24 小时生效）。</p>
+                <div class="device-info-card">
+                    <div><strong>目标地址:</strong> <code>${escapeForJs(t)}</code></div>
+                    <div><strong>类型:</strong> ${type === 'mac' ? 'MAC地址' : 'IP地址'}</div>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button class="cbi-button cancel-btn">取消</button>
+                <button class="cbi-button cbi-button-apply confirm-btn">确定加入</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    setTimeout(() => {
+        const dlg = document.querySelector('.confirm-dialog-overlay');
+        if (!dlg) return;
+        dlg.querySelector('.cancel-btn').addEventListener('click', () => dlg.remove());
+        dlg.querySelector('.confirm-btn').addEventListener('click', () => {
+            dlg.remove();
+            submitBlacklist(t, type, h);
+        });
+    }, 10);
+}
+
+function submitBlacklist(target, type, hostname) {
+    showToast('正在加入黑名单...', 'info');
+    const fd = new FormData();
+    fd.append('target', target);
+    fd.append('type', type);
+    fd.append('name', hostname || '');
+
+    fetch('<%=luci.dispatcher.build_url("admin/control/znetcontrol/api/blacklist_add")%>', {
+        method: 'POST',
+        body: fd
+    })
+    .then(r => r.text())
+    .then(text => {
+        let res;
+        try { res = JSON.parse(text); } catch (e) { throw new Error('响应格式错误'); }
+        if (res.success) {
+            showToast(res.message || '已加入黑名单', 'success');
+            setTimeout(refreshDevices, 800);
+        } else {
+            showToast('加入失败: ' + (res.message || '未知错误'), 'error');
+        }
+    })
+    .catch(err => {
+        console.error('加入黑名单失败:', err);
+        showToast('加入失败: ' + err.message, 'error');
+    });
+}
+
 function showToast(message, type = 'info') {
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
@@ -329,8 +451,35 @@ style.textContent = `
     .ip-address-cell { width: 20%; min-width: 180px; }
     .mac-address-cell { width: 25%; min-width: 200px; }
     .hostname-cell { width: 25%; }
-    .status-cell { width: 30%; }
+    .status-cell { width: 32%; }
     
+    /* IPv6 地址列 */
+    .ipv6-address-cell { width: 24%; }
+    .ipv6-list { display: flex; flex-direction: column; gap: 3px; }
+    .ipv6-item {
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 12px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--znc-input-border);
+        background-color: var(--znc-box-bg);
+        color: var(--znc-primary-text);
+        word-break: break-all;
+    }
+    .ipv6-none { color: var(--znc-secondary-text); }
+    .device-sources { font-size: 11px; color: var(--znc-secondary-text); margin-top: 4px; }
+    .status-online {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .status-online.on { background: var(--znc-success-bg); color: var(--znc-success-text); }
+    .status-online.off { background: var(--znc-danger-bg); color: var(--znc-danger-text); }
+    .device-offline { opacity: 0.75; }
+
     /* IP地址框 - 固定宽度 */
     .ip-address-box {
         font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
@@ -532,6 +681,60 @@ style.textContent = `
         transform: translateY(-1px);
         box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
     }
+
+    /* 已加入黑名单 */
+    .bl-configured {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px dashed var(--znc-border);
+    }
+
+    .bl-configured .status-icon {
+        background: var(--znc-danger-bg);
+        color: var(--znc-danger-text);
+    }
+
+    .bl-title {
+        color: var(--znc-danger-text) !important;
+    }
+
+    .bl-label {
+        font-size: 12px;
+        color: var(--znc-secondary-text);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* 加入黑名单按钮 */
+    .bl-not-configured {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px dashed var(--znc-border);
+    }
+
+    .add-bl-btn {
+        background: linear-gradient(135deg, #e55353 0%, #b02a37 100%);
+        color: #fff;
+        border: none;
+        padding: 8px 14px;
+        border-radius: 6px;
+        font-size: 12.5px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 4px rgba(176, 42, 55, 0.28);
+        white-space: nowrap;
+    }
+
+    .add-bl-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(176, 42, 55, 0.4);
+    }
     
     /* 加载动画 */
     .loading-spinner {
@@ -603,6 +806,7 @@ style.textContent = `
         }
         
         .ip-address-cell:before { content: "IP地址:"; }
+        .ipv6-address-cell:before { content: "IPv6地址:"; }
         .mac-address-cell:before { content: "MAC地址:"; }
         .hostname-cell:before { content: "主机名:"; }
         .status-cell:before { content: "管控状态:"; }

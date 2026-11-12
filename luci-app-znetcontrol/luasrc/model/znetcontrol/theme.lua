@@ -198,4 +198,103 @@ function M.js_bundle()
 	return M.js_detect .. "\n" .. M.js_apply()
 end
 
+
+-- ============ 2.3.13：规则下发状态（缺陷③） ============
+-- 目的：让用户能区分"规则已下发但设备无流量命中"与"规则根本没下发"。
+-- 数据由 /admin/control/znetcontrol/api/rule_status 提供（控制器解析 nft 链得出）。
+
+-- 取 LuCI 内部 URL；不可用时退回相对路径（页面都在 .../znetcontrol/ 下）
+function M.api_url(path)
+	local ok, d = pcall(require, "luci.dispatcher")
+	if ok and type(d) == "table" and type(d.build_url) == "function" then
+		local ok2, u = pcall(d.build_url, path)
+		if ok2 and type(u) == "string" and u ~= "" then
+			return u
+		end
+	end
+	return (path:gsub("^admin/control/znetcontrol/", ""))
+end
+
+function M.rule_status_html()
+	return [[<div class="cbi-section" id="znc-rule-status-section">
+<h3>规则下发状态</h3>
+<style>
+.znc-rs-table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+.znc-rs-table th,.znc-rs-table td{padding:8px 10px;border-bottom:1px solid rgba(128,128,128,.25);text-align:left;font-size:13px;vertical-align:top;}
+.znc-rs-table th{font-weight:600;background:rgba(128,128,128,.10);}
+.znc-rs-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;}
+.znc-rs-badge.ok{background:rgba(40,167,69,.18);color:#155724;}
+.znc-rs-badge.warn{background:rgba(255,193,7,.20);color:#856404;}
+.znc-rs-badge.bad{background:rgba(220,53,69,.18);color:#721c24;}
+.znc-rs-badge.off{background:rgba(128,128,128,.18);color:#555;}
+.znc-rs-note{font-size:11px;opacity:.75;margin-top:3px;}
+.znc-rs-foot{font-size:12px;opacity:.7;margin-top:6px;}
+.znc-rs-empty{text-align:center;padding:20px;}
+</style>
+<table class="znc-rs-table">
+<thead><tr><th>规则</th><th>目标</th><th>启用</th><th>时间判定</th><th>nft 状态</th><th>命中包数</th><th>命中字节</th><th>结论</th></tr></thead>
+<tbody id="znc-rs-body"><tr><td colspan="8" class="znc-rs-empty">正在加载规则状态...</td></tr></tbody>
+</table>
+<div class="znc-rs-foot"><button type="button" class="cbi-button cbi-button-action" onclick="zncRefreshRuleStatus()">刷新状态</button> <span id="znc-rs-time"></span></div>
+</div>]]
+end
+
+function M.rule_status_js(url)
+	url = url or "api/rule_status"
+	local js = [[
+(function(){
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function fmtBytes(b){ b=Number(b)||0; if(b<1024) return b+' B'; var u=['KB','MB','GB','TB']; var i=-1; do{ b=b/1024; i++; }while(b>=1024 && i<u.length-1); return b.toFixed(1)+' '+u[i]; }
+  function badge(t,c){ return '<span class="znc-rs-badge '+(c||'off')+'">'+esc(t)+'</span>'; }
+  function td(v){ return '<td>'+v+'</td>'; }
+  function row(cells, cls){
+    var h='<tr>';
+    for(var i=0;i<cells.length;i++){
+      var c=(cls&&cls[i])||'';
+      h+=td(c===''?esc(cells[i]):badge(cells[i],c));
+    }
+    return h+'</tr>';
+  }
+  function render(rows){
+    var body=document.getElementById('znc-rs-body');
+    if(!body) return;
+    if(!rows||!rows.length){ body.innerHTML='<tr><td colspan="8">暂无规则</td></tr>'; return; }
+    var h='';
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      var tc='off';
+      if(r.time_state==='in_time') tc='ok';
+      else if(r.time_state!=='disabled') tc='warn';
+      var nf=r.nft_present?('已下发 handle '+(r.nft_handle||'?')):'未下发';
+      var nfc=r.nft_present?'ok':'bad';
+      var st=r.status||'';
+      var sc='off';
+      if(st.indexOf('已下发并已命中')>=0) sc='ok';
+      else if(st.indexOf('无流量命中')>=0) sc='warn';
+      else if(st.indexOf('未下发')>=0) sc='bad';
+      var pk=(r.packets===null||r.packets===undefined)?'-':String(r.packets);
+      var by=(r.bytes===null||r.bytes===undefined)?'-':fmtBytes(r.bytes);
+      var en=r.enable?'已启用':'未启用';
+      var enc=r.enable?'ok':'off';
+      var tt=r.time_text||'-';
+      h+=row([r.name,r.target,en,tt,nf,pk,by,st],['','',enc,tc,nfc,'','',sc]);
+    }
+    body.innerHTML=h;
+    var t=document.getElementById('znc-rs-time');
+    if(t) t.textContent='更新时间：'+new Date().toLocaleString();
+  }
+  function refresh(){
+    var body=document.getElementById('znc-rs-body');
+    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(render).catch(function(e){
+      if(body) body.innerHTML='<tr><td colspan="8">加载失败：'+esc(e.message)+'</td></tr>';
+    });
+  }
+  window.zncRefreshRuleStatus=refresh;
+  window.zncRenderRuleStatus=render;
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',refresh); } else { refresh(); }
+})();
+]]
+	return (js:gsub("__ZNC_URL__", function() return url end))
+end
+
 return M

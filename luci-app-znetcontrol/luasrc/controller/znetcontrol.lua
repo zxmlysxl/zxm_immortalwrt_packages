@@ -85,8 +85,9 @@ function index()
     entry({"admin", "control", "znetcontrol", "rules"}, cbi("znetcontrol/rules"), _("管控规则"), 20)
     entry({"admin", "control", "znetcontrol", "schedule"}, cbi("znetcontrol/schedule"), _("定时任务"), 25)
     entry({"admin", "control", "znetcontrol", "blacklist"}, cbi("znetcontrol/blacklist"), _("MAC 黑名单"), 27)
-    entry({"admin", "control", "znetcontrol", "logs"}, template("znetcontrol/logs"), _("系统日志"), 30)
     entry({"admin", "control", "znetcontrol", "devices"}, template("znetcontrol/devices"), _("在线设备"), 40)
+    -- 系统日志放最后
+    entry({"admin", "control", "znetcontrol", "logs"}, template("znetcontrol/logs"), _("系统日志"), 50)
     
     -- API 接口
     entry({"admin", "control", "znetcontrol", "api", "get_status"}, call("action_get_status")).leaf = true
@@ -102,9 +103,99 @@ function index()
     entry({"admin", "control", "znetcontrol", "api", "get_config"}, call("action_get_config")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "save_config"}, call("action_save_config")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "quick_add"}, call("action_quick_add")).leaf = true
+    entry({"admin", "control", "znetcontrol", "api", "blacklist_add"}, call("action_blacklist_add")).leaf = true
 end
 
 -- 快速添加规则函数
+function action_blacklist_add()
+    local http = require("luci.http")
+    local uci = require("luci.model.uci").cursor()
+    local sys = require("luci.sys")
+
+    http.prepare_content("application/json")
+    local data = http.formvalue()
+
+    local target = data and data.target
+    local name   = data and data.name
+    local ipv6   = data and data.ip6
+
+    if not target or target == "" then
+        http.write_json({ success = false, message = "目标地址不能为空" })
+        return
+    end
+
+    -- 归一化：MAC 统一成大写冒号形式
+    local raw = tostring(target):gsub("%s+", "")
+    local mac = raw:upper():gsub("%-", ":")
+    local is_mac = mac:match("^%x%x:%x%x:%x%x:%x%x:%x%x:%x%x$") and true or false
+    if is_mac then
+        if mac == "00:00:00:00:00:00" then
+            http.write_json({ success = false, message = "MAC 不能为全零" })
+            return
+        end
+    end
+
+    -- 去重：已存在启用的同目标条目则直接返回成功
+    local exists = false
+    uci:foreach("znetcontrol", "blacklist", function(s)
+        local en = s.enable
+        if en == "0" or en == "false" or en == "off" then return end
+        local function same(v)
+            if not v or v == "" then return false end
+            local t = tostring(v):gsub("%s+", ""):upper():gsub("%-", ":")
+            return t == (is_mac and mac or raw)
+        end
+        if same(s.mac) or same(s.ip) or same(s.ip6) then exists = true end
+    end)
+
+    if exists then
+        http.write_json({ success = true, message = "该设备已在黑名单中", data = { already = true } })
+        return
+    end
+
+    -- 备注名：优先用传入名字，缺省按 MAC 尾号生成
+    local comment = name and name:gsub("[\r\n]+", ""):sub(1, 50) or ""
+    if comment == "" or comment == "未知设备" then
+        if is_mac then
+            local mc = mac:gsub(":", "")
+            comment = "黑名单_" .. (mc:sub(-6))
+        else
+            comment = "黑名单_" .. raw:gsub("%.", "_")
+        end
+    end
+
+    local opts = { enable = "1", boost = "0", comment = comment }
+    if is_mac then
+        opts.mac = mac
+    elseif raw:match(":") then
+        opts.ip6 = raw
+    else
+        opts.ip = raw
+    end
+    if ipv6 and ipv6 ~= "" and is_mac then
+        opts.ip6 = ipv6
+    end
+
+    local sid = uci:section("znetcontrol", "blacklist", nil, opts)
+    uci:commit("znetcontrol")
+
+    -- 立即同步到 nft（服务在跑则热同步，否则拉起服务）
+    local running = (sys.call("pidof znetcontrol >/dev/null 2>&1") == 0)
+    if running then
+        sys.call("/usr/bin/znetcontrol blacklist-sync >/dev/null 2>&1")
+    else
+        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
+    end
+
+    log("黑名单添加成功", { id = sid, target = is_mac and mac or raw, comment = comment })
+
+    http.write_json({
+        success = true,
+        message = "已加入黑名单",
+        data = { id = sid, comment = comment, target = is_mac and mac or raw }
+    })
+end
+
 function action_quick_add()
     local http = require("luci.http")
     local uci = require("luci.model.uci").cursor()
@@ -606,6 +697,31 @@ function action_get_devices()
     -- ---- 规则目标集合（判断"是否已配规则"） ----
     local rule_macs = {}
     local rule_ips = {}
+    -- ---- 黑名单集合（判断"是否已加入黑名单"） ----
+    local bl_macs = {}
+    local bl_ips = {}
+    local bl_names = {}
+
+    local function norm_bl(v)
+        if not v then return "" end
+        local t = tostring(v):gsub("%s+", "")
+        local mac = znc_norm_mac(t)
+        if mac ~= "" then return mac end
+        return t:lower()
+    end
+
+    uci:foreach("znetcontrol", "blacklist", function(s)
+        local en = s.enable
+        if en == "0" or en == "false" or en == "off" then return end
+        local label = (s.comment and s.comment ~= "") and s.comment or ""
+        for _, f in ipairs({ "mac", "ip", "ip6" }) do
+            local v = norm_bl(s[f])
+            if v ~= "" then
+                if f == "mac" then bl_macs[v] = true else bl_ips[v] = true end
+                bl_names[v] = label
+            end
+        end
+    end)
     local function add_rule_target(t)
         if not t or t == "" then return end
         local v = tostring(t):gsub("%s+", "")
@@ -836,6 +952,23 @@ function action_get_devices()
             if rule_ips[a:lower()] then v6_in_rules = true end
         end
 
+        -- 黑名单匹配（MAC 优先，其次 IPv4/IPv6）
+        local mac_in_bl = (e.mac ~= "" and bl_macs[e.mac]) and true or false
+        local ip_in_bl = (e.ip ~= "" and bl_ips[e.ip:lower()]) and true or false
+        local v6_in_bl = false
+        for a, _ in pairs(e.ipv6) do
+            if bl_ips[a:lower()] then v6_in_bl = true end
+        end
+        local is_blacklisted = mac_in_bl or ip_in_bl or v6_in_bl
+        local bl_label = ""
+        if mac_in_bl then bl_label = bl_names[e.mac] or "" end
+        if bl_label == "" and ip_in_bl then bl_label = bl_names[e.ip:lower()] or "" end
+        if bl_label == "" and v6_in_bl then
+            for a, _ in pairs(e.ipv6) do
+                if bl_ips[a:lower()] then bl_label = bl_names[a:lower()] or ""; break end
+            end
+        end
+
         local ipv4, ipv6, srcs = {}, {}, {}
         for a, _ in pairs(e.ipv4) do table.insert(ipv4, a) end
         for a, _ in pairs(e.ipv6) do table.insert(ipv6, a) end
@@ -850,6 +983,8 @@ function action_get_devices()
             hostname = (e.hostname ~= "" and e.hostname) or "未知设备",
             online = e.online and true or false,
             is_configured = (mac_in_rules or ip_in_rules or v6_in_rules) and true or false,
+            is_blacklisted = is_blacklisted and true or false,
+            blacklist_label = bl_label,
             mac_in_rules = mac_in_rules,
             ip_in_rules = ip_in_rules,
             ipv4 = ipv4,

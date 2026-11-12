@@ -9,6 +9,11 @@ m = Map("znetcontrol", translate("上网管控规则"),
     "<br><span style='color: var(--znc-success-text);'>目标格式：单IP / IP范围 / CIDR / MAC地址</span>" ..
     "<br><span style='color: var(--znc-warn-text);'>星期格式：0=每天 | 1-5=工作日 | 6,7=周末 | 1-3=范围 | 1,3,5=自定义</span>" .. "<style>:root{--znc-danger-text:#dc3545;--znc-primary-text:#007bff;--znc-success-text:#28a745;--znc-warn-text:#6f42c1;}html[data-zncolor=dark]{--znc-danger-text:#ff8a95;--znc-primary-text:#4dabf7;--znc-success-text:#4fd67a;--znc-warn-text:#ffd75e;}</style>")
 
+-- ============ 2.3.13：规则下发状态（缺陷③） ============
+-- 在规则页直接展示每条规则的"是否真在 nft 链上 + 命中包数/字节数"，
+-- 以便区分"规则已下发但设备无流量命中"与"规则根本没下发"。
+local znc_theme = require("luci.model.znetcontrol.theme")
+
 local function manage_service_by_rules()
     -- 统计启用规则数量
     local enabled_count = 0
@@ -46,6 +51,13 @@ local function manage_service_by_rules()
         return enabled_count, false
     end
 end
+
+-- ========== 追加"规则下发状态"面板 ==========
+m.description = (m.description or "") ..
+    "<br><hr>" ..
+    znc_theme.rule_status_html() ..
+    "<script>" .. znc_theme.rule_status_js(znc_theme.api_url("admin/control/znetcontrol/api/rule_status")) .. "</script>"
+-- ========== 结束 ==========
 
 -- ========== 创建全局设置（如果不存在） ==========
 local function ensure_global_settings()
