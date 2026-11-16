@@ -4,7 +4,8 @@ local sys = require("luci.sys")
 local http = require("luci.http")
 
 m = Map("znetcontrol", translate("MAC 黑名单"),
-    translate("把设备加入黑名单后，该设备立即无法上网（全天 24 小时生效，不看时间、不看星期）。") ..
+    translate("把设备加入黑名单后，该设备无法上网（全天 24 小时生效，不看时间、不看星期）。") ..
+    "<br><span style='color: var(--znc-warn-text);'>改动保存后不会立刻生效，必须点击页面底部「保存并应用」才会下发到防火墙。</span>" ..
     "<br><span style='color: var(--znc-success-text);'>与「上网管控规则」完全独立：时间规则按时间段放行/阻断，黑名单只看开关。</span>" ..
     "<br><span style='color: var(--znc-warn-text);'>只能拦截经过本路由器的流量。若设备走了其它出口（如别的热点/自有链路），本功能无法拦截。</span>" ..
     "<style>:root{--znc-danger-text:#dc3545;--znc-primary-text:#007bff;--znc-success-text:#28a745;--znc-warn-text:#6f42c1;}html[data-zncolor=dark]{--znc-danger-text:#ff8a95;--znc-primary-text:#4dabf7;--znc-success-text:#4fd67a;--znc-warn-text:#ffd75e;}</style>")
@@ -93,7 +94,13 @@ function s.create(self, section)
     return id
 end
 
--- 保存后立即同步到 nft（不动时间规则）
+-- 仅在「保存并应用」(apply) 后下发到 nft
+-- 关键：on_after_commit 只在 apply 路径触发（cbi.lua 里 commit/apply 钩子
+-- 位于 formvalue("cbi.apply") 分支内），普通「保存」只是把改动写进
+-- /tmp/.uci 的暂存区，不会触发这里。
+-- 另外守护进程 znetcontrolctrl 每 30s 跑一次 znetcontrol sync，
+-- 而 sync_blacklist 读的是 /etc/config/znetcontrol（已提交配置），
+-- 因此暂存区里的改动不会被提前下发 —— 符合「必须点保存并应用才生效」。
 function m.on_after_commit(self)
     uci:commit("znetcontrol")
     -- 服务没跑时 start 会自己同步；跑着的话这里单独同步黑名单

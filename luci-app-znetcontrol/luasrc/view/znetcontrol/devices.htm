@@ -132,9 +132,6 @@ function refreshDevices() {
                     } else {
                         html += '<span class="ipv6-none">—</span>';
                     }
-                    if (sources.length) {
-                        html += '<div class="device-sources">来源：' + escapeForJs(sources.join('/')) + '</div>';
-                    }
                     html += '</div>';
 
                     // MAC地址列
@@ -156,6 +153,9 @@ function refreshDevices() {
                            '<div class="device-status">';
                     html += '<div class="status-online ' + (online ? 'on' : 'off') + '">' +
                            (online ? '在线' : '离线') + '</div>';
+
+                    // 管控规则 与 黑名单 两个按钮水平排列
+                    html += '<div class="status-actions-row">';
 
                     if (isConfigured) {
                         html += '<div class="status-container configured">' +
@@ -194,6 +194,8 @@ function refreshDevices() {
                                '</button>' +
                                '</div>';
                     }
+
+                    html += '</div>';
 
                     html += '</div></div></div>';
                 });
@@ -608,6 +610,16 @@ style.textContent = `
         color: var(--znc-primary-text);
     }
     
+    /* 管控规则 / 黑名单 两个按钮水平排列 */
+    .status-actions-row {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+    }
+
     /* 状态容器样式 */
     .status-container {
         display: flex;

@@ -57,22 +57,46 @@ if (document.readyState === 'loading') {
                 <code id="app-version">--</code>
             </div>
         </div>
-        <div class="cbi-value">
-            <label class="cbi-label"><%:总规则数%></label>
-            <div class="cbi-value-field">
-                <code id="total-rules">0</code>
+    </fieldset>
+
+    <fieldset class="cbi-section">
+        <legend><%:上网管控规则%></legend>
+        <div class="znc-card-row">
+            <div class="znc-card">
+                <div class="znc-card-value" id="total-rules">0</div>
+                <div class="znc-card-label"><%:总规则数%></div>
+            </div>
+            <div class="znc-card">
+                <div class="znc-card-value" id="enabled-rules">0</div>
+                <div class="znc-card-label"><%:启用规则数%></div>
+            </div>
+            <div class="znc-card">
+                <div class="znc-card-value" id="active-rules">0</div>
+                <div class="znc-card-label"><%:当前生效规则%></div>
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset class="cbi-section">
+        <legend><%:MAC 黑名单%></legend>
+        <div class="znc-card-row">
+            <div class="znc-card">
+                <div class="znc-card-value" id="bl-total">0</div>
+                <div class="znc-card-label"><%:黑名单条目%></div>
+            </div>
+            <div class="znc-card">
+                <div class="znc-card-value" id="bl-enabled">0</div>
+                <div class="znc-card-label"><%:已启用%></div>
+            </div>
+            <div class="znc-card">
+                <div class="znc-card-value" id="bl-active">0</div>
+                <div class="znc-card-label"><%:当前已生效%></div>
             </div>
         </div>
         <div class="cbi-value">
-            <label class="cbi-label"><%:启用规则数%></label>
+            <label class="cbi-label"><%:应用状态%></label>
             <div class="cbi-value-field">
-                <code id="enabled-rules">0</code>
-            </div>
-        </div>
-        <div class="cbi-value">
-            <label class="cbi-label"><%:当前生效规则%></label>
-            <div class="cbi-value-field">
-                <code id="active-rules">0</code>
+                <span id="bl-pending" class="label">--</span>
             </div>
         </div>
     </fieldset>
@@ -149,6 +173,9 @@ function refreshStatus(force = false) {
         document.getElementById('total-rules').textContent = '0';
         document.getElementById('enabled-rules').textContent = '0';
         document.getElementById('active-rules').textContent = '0';
+        document.getElementById('bl-total').textContent = '0';
+        document.getElementById('bl-enabled').textContent = '0';
+        document.getElementById('bl-active').textContent = '0';
         
         // 如果是网络错误，显示重试按钮
         if (error.message.includes('network') || error.message.includes('Failed')) {
@@ -207,11 +234,27 @@ function updateStatusDisplay(data) {
         document.getElementById('app-version').textContent = data.version;
     }
     
-    // 规则统计
+    // 规则统计（卡片）
     if (data) {
         document.getElementById('total-rules').textContent = data.total_rules || 0;
         document.getElementById('enabled-rules').textContent = data.enabled_rules || 0;
         document.getElementById('active-rules').textContent = data.active_rules || 0;
+
+        // MAC 黑名单统计（卡片）
+        document.getElementById('bl-total').textContent = data.blacklist_total || 0;
+        document.getElementById('bl-enabled').textContent = data.blacklist_enabled || 0;
+        document.getElementById('bl-active').textContent = data.blacklist_active || 0;
+
+        const pendEl = document.getElementById('bl-pending');
+        if (pendEl) {
+            if (data.blacklist_pending) {
+                pendEl.textContent = '有未应用变更（需点击「保存并应用」）';
+                pendEl.className = 'label error';
+            } else {
+                pendEl.textContent = '配置与应用一致';
+                pendEl.className = 'label success';
+            }
+        }
     }
     setTimeout(checkFirewallStatus, 1000);
 }
@@ -307,6 +350,39 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 
 <style>
+/* 统计卡片（水平排列） */
+.znc-card-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 4px 0 10px 0;
+}
+.znc-card {
+    flex: 1 1 150px;
+    min-width: 140px;
+    max-width: 320px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: var(--znc-box-bg);
+    border: 1px solid var(--znc-border);
+    text-align: center;
+}
+.znc-card-value {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--znc-primary-text);
+}
+.znc-card-label {
+    font-size: 13px;
+    color: var(--znc-secondary-text);
+    margin-top: 6px;
+}
+@media (max-width: 480px) {
+    .znc-card { flex: 1 1 100%; max-width: none; }
+}
+
 /* 保持原有状态标签样式 */
 .label {
     display: inline-block;

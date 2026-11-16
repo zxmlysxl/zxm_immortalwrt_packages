@@ -576,6 +576,42 @@ get_device_ips() {
 # 读取 uci 段 blacklist（字段：mac / ip / enable / comment / boost），
 # 写入 nft 集合 bl_mac / bl_ip / bl_ip6。与时间规则互不干扰。
 # ==========================================================
+# 【2.3.16】只读已提交配置 /etc/config/znetcontrol 里的黑名单条目。
+# 原因: LuCI 的「保存」只把改动暂存到 /tmp/.uci/znetcontrol, busybox uci get
+# 会把暂存区合并进查询结果; 守护进程 znetcontrolctrl 每 30s 跑一次 sync,
+# 于是「保存」但没点「保存并应用」的改动也会被提前下发到 nft。
+# 现在以已提交文件为唯一口径: 只有真正 apply(commit) 过的条目才会生效。
+# 输出格式(每行一条, 竖线分隔): mac|ip|ip6|boost
+blacklist_committed_entries() {
+    [ -f /etc/config/znetcontrol ] || return 0
+    awk '
+BEGIN { inblk=0; q=sprintf("%c",39) }
+function val(   s) {
+    s=$3
+    gsub(q,"",s)
+    return s
+}
+function flush() {
+    if (inblk && (mac!="" || ip!="" || ip6!="")) {
+        if (en!="0" && en!="false" && en!="off") {
+            print mac "|" ip "|" ip6 "|" boost
+        }
+    }
+    inblk=0; mac=""; ip=""; ip6=""; boost=""; en="1"
+}
+/^[[:space:]]*config[[:space:]]+blacklist/ { flush(); inblk=1; next }
+/^[[:space:]]*config[[:space:]]/ { flush(); inblk=0; next }
+inblk {
+    if ($1=="option" && $2=="mac") mac=val()
+    else if ($1=="option" && $2=="ip6") ip6=val()
+    else if ($1=="option" && $2=="ip") ip=val()
+    else if ($1=="option" && $2=="boost") boost=val()
+    else if ($1=="option" && $2=="enable") en=val()
+}
+END { flush() }
+' /etc/config/znetcontrol
+}
+
 sync_blacklist() {
     _bl_idx=0
     _bl_n=0
@@ -584,88 +620,32 @@ sync_blacklist() {
     _bl_ip6s=""
     _bl_boost=""
 
-    while true; do
-        _en=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].enable")
-        _mac=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].mac")
-        _ip=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].ip")
-        _b6=$(uci -q get "znetcontrol.@blacklist[$_bl_idx].ip6")
-        # 段结束判定：三个主字段都取不到
-        if [ -z "$_en" ] && [ -z "$_mac" ] && [ -z "$_ip" ] && [ -z "$_b6" ]; then
-            break
-        fi
-        if [ "$_en" != "0" ] && [ "$_en" != "false" ] && [ "$_en" != "off" ]; then
-            if [ -n "$_mac" ]; then
-                _m=$(echo "$_mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-                if is_valid_mac "$_m"; then
-                    _bl_macs="$_bl_macs $_m"
-                    _bl_n=$((_bl_n + 1))
-                    [ "$(uci -q get "znetcontrol.@blacklist[$_bl_idx].boost")" = "1" ] && _bl_boost="$_bl_boost $_m"
-                else
-                    log "ERROR: 黑名单第 $_bl_idx 条 MAC 非法，已跳过: [$_mac]"
-                fi
-            fi
-            if [ -n "$_ip" ]; then
-                _bl_ips="$_bl_ips $_ip"
-                _bl_n=$((_bl_n + 1))
-            fi
-            if [ -n "$_b6" ]; then
-                _bl_ip6s="$_bl_ip6s $_b6"
-                _bl_n=$((_bl_n + 1))
-            fi
-        fi
+    # 只读已提交配置(见 blacklist_committed_entries 的说明)
+    _bl_lines=$(blacklist_committed_entries)
+    while IFS="|" read -r _mac _ip _b6 _bboost; do
+        [ -z "$_mac$_ip$_b6" ] && continue
         _bl_idx=$((_bl_idx + 1))
-    done
-
-    # 集合不存在时（服务未 start）直接返回，不报错
-    if ! nft list set inet znetcontrol bl_mac >/dev/null 2>&1; then
-        dbg "黑名单集合不存在，跳过同步"
-        return 0
-    fi
-
-    # 全量重建（黑名单条目通常很少，重建比差分更可靠）
-    nft flush set inet znetcontrol bl_mac 2>/dev/null
-    nft flush set inet znetcontrol bl_ip 2>/dev/null
-    nft flush set inet znetcontrol bl_ip6 2>/dev/null
-
-    for _m in $_bl_macs; do
-        nft add element inet znetcontrol bl_mac "{ $_m }" 2>/dev/null || log "ERROR: 写入黑名单 MAC 失败: $_m"
-    done
-    for _a in $_bl_ips; do
-        nft add element inet znetcontrol bl_ip "{ $_a }" 2>/dev/null || log "ERROR: 写入黑名单 IP 失败: $_a"
-    done
-    for _a6 in $_bl_ip6s; do
-        nft add element inet znetcontrol bl_ip6 "{ $_a6 }" 2>/dev/null || log "ERROR: 写入黑名单 IPv6 失败: $_a6"
-    done
-
-    # 强力黑名单：额外在 input 链拦截（断访问路由器）
-    _del_rule_by_comment inet znetcontrol input "bl-mac-input-boost"
-    for _m in $_bl_boost; do
-        nft insert rule inet znetcontrol input ether saddr "$_m" counter drop comment "bl-mac-input-boost" 2>/dev/null
-    done
-
-    # 回读校验 + 状态落盘
-    # 注意：这里直接匹配 nft list set 的整段输出，而不是先解析 elements=，
-    # 因为不同 nft 版本的输出换行/格式有差异，先解析再比对容易产生
-    # "集合里明明有、却报失败"的假告警（历史上就吃过这种假信号的亏）。
-    _raw=$(nft list set inet znetcontrol bl_mac 2>/dev/null)
-    _stat="/var/run/$NAME.blacklist"
-    : > "$_stat"
-    for _m in $_bl_macs; do
-        case "$_raw" in
-            *"$_m"*) echo "OK $_m" >> "$_stat" ;;
-            *) echo "FAIL $_m" >> "$_stat"; log "ERROR: 黑名单 MAC $_m 回读失败（集合中未找到）" ;;
-        esac
-    done
-    # 反向校验：集合里是否有已从配置删除的残留
-    for _e in $(set_elements bl_mac); do
-        case " $_bl_macs " in
-            *" $_e "*) ;;
-            *) log "WARN: 集合 bl_mac 中残留未在配置里的元素: $_e" ;;
-        esac
-    done
-
-    info "黑名单已同步: $((_bl_n)) 条规则（MAC $(echo $_bl_macs | wc -w) / IPv4 $(echo $_bl_ips | wc -w) / IPv6 $(echo $_bl_ip6s | wc -w)，强力 $(echo $_bl_boost | wc -w)）"
-    return 0
+        if [ -n "$_mac" ]; then
+            _m=$(echo "$_mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            if is_valid_mac "$_m"; then
+                _bl_macs="$_bl_macs $_m"
+                _bl_n=$((_bl_n + 1))
+                [ "$_bboost" = "1" ] && _bl_boost="$_bl_boost $_m"
+            else
+                log "ERROR: 黑名单第 $_bl_idx 条 MAC 非法，已跳过: [$_mac]"
+            fi
+        fi
+        if [ -n "$_ip" ]; then
+            _bl_ips="$_bl_ips $_ip"
+            _bl_n=$((_bl_n + 1))
+        fi
+        if [ -n "$_b6" ]; then
+            _bl_ip6s="$_bl_ip6s $_b6"
+            _bl_n=$((_bl_n + 1))
+        fi
+    done <<EOF
+$_bl_lines
+EOF
 }
 
 # 打印黑名单当前状态（供界面/人工排查）

@@ -385,6 +385,48 @@ function action_get_status(return_data)
         end
     end)
     
+    -- ========== MAC 黑名单统计 ==========
+    -- blacklist_total/enabled: 当前 UCI 里（用户看到的，含未应用改动）
+    -- blacklist_active: 已提交配置里启用的条数（真正下发到 nft 的口径）
+    -- blacklist_pending: 两者不一致 => 有未应用变更，需点「保存并应用」
+    local bl_total = 0
+    local bl_enabled = 0
+    uci:foreach("znetcontrol", "blacklist", function(s)
+        bl_total = bl_total + 1
+        local en = s.enable
+        if not (en == "0" or en == "false" or en == "off") then
+            bl_enabled = bl_enabled + 1
+        end
+    end)
+
+    local bl_active = 0
+    local cfg_file = "/etc/config/znetcontrol"
+    local fd = io.open(cfg_file, "r")
+    if fd then
+        local in_bl = false
+        local en = nil
+        local function flush()
+            if in_bl and en ~= "0" and en ~= "false" and en ~= "off" then
+                bl_active = bl_active + 1
+            end
+            in_bl = false
+            en = nil
+        end
+        for line in fd:lines() do
+            if line:match("^%s*config%s+blacklist") then
+                flush()
+                in_bl = true
+            elseif line:match("^%s*config%s") then
+                flush()
+            elseif in_bl then
+                local v = line:match("option%s+enable%s+'?([^'%s]*)'?")
+                if v then en = v end
+            end
+        end
+        flush()
+        fd:close()
+    end
+
     local idlist_file = "/var/run/znetcontrol.idlist"
     if nixio.fs.access(idlist_file) then
         local fd = io.open(idlist_file, "r")
@@ -449,6 +491,10 @@ function action_get_status(return_data)
         total_rules = total_count,
         enabled_rules = enabled_count,
         active_rules = active_count,
+        blacklist_total = bl_total,
+        blacklist_enabled = bl_enabled,
+        blacklist_active = bl_active,
+        blacklist_pending = (bl_enabled ~= bl_active),
         nft_rules = nft_count,
         pid = main_pid or "",
         uptime = uptime or "",
