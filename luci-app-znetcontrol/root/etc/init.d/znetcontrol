@@ -204,7 +204,12 @@ start_service() {
     procd_set_param pidfile "$PIDFILE"
     procd_set_param stdout 1
     procd_set_param stderr 1
-    procd_set_param file /etc/config/znetcontrol
+    -- 【2.3.22】去掉 procd_set_param file /etc/config/znetcontrol：
+    --   UCI 变更触发 procd 反复重启守护，stop→start 间隙被 procd 误记为 crash，
+    --   累积触发 crash loop 后 procd 放弃 respawn，守护一直死、概览页"服务已停止"。
+    --   黑名单/规则 nft 的"保存并应用即时生效"改由 CBI apply 块显式调
+    --   /usr/bin/znetcontrol start（同步重载 nft，比 file 监控更及时可控）。
+    --   保留 respawn（守护真崩仍能自启）。
     procd_set_param user root
     procd_set_param group root
     procd_close_instance

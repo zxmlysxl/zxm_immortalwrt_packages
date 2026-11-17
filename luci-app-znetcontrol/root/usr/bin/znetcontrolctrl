@@ -3,6 +3,12 @@
 NAME=znetcontrol
 IDLIST="/var/run/$NAME.idlist"
 TMPID="/var/run/$NAME.tmpid"
+PIDFILE="/var/run/$NAME.pid"
+
+# 【2.3.22】procd respawn 依赖守护脚本自己写 pidfile 才能跟踪新 pid。
+# 之前没写 pidfile，守护崩一次后 pidfile 残留死 pid，procd 读不到活 pid 就判死、
+# 不再 respawn，导致"服务已停止"一直显示、手动重启才恢复。这里把当前 pid 写进 pidfile。
+echo $$ > "$PIDFILE"
 
 get_rule_name() {
     id=$1
