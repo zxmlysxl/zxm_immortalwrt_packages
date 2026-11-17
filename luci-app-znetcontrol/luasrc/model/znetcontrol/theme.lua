@@ -340,8 +340,8 @@ function M.rule_status_js(url)
   window.zncRenderRuleStatus=function(rows,scope){ render(rows,scope); };
   // 【2.3.22】默认显示 + 自动 10s poll：保存并应用后 nft 变化（HUP 立即重载）前端 10s 内自动刷新，
   // 不再"根本不刷新"（旧版默认隐藏+手动点卡片才 refresh）。
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){ zncShowRuleStatus(); setInterval(refresh,10000); }); }
-  else { zncShowRuleStatus(); refresh(); setInterval(refresh,10000); }
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){ zncShowRuleStatus(); setInterval(refresh,5000); }); }
+  else { zncShowRuleStatus(); refresh(); setInterval(refresh,5000); }
 })();
 ]]
 	return (js:gsub("__ZNC_URL__", function() return url end))
