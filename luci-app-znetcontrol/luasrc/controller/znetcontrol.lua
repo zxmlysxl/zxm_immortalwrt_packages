@@ -1147,8 +1147,13 @@ function action_rule_status()
     local cur_min = (t.hour or 0) * 60 + (t.min or 0)
 
     local result = {}
+    -- 【2.3.21 修复】idx 必须用 device 段在 UCI 里的位置序号（与 /usr/bin/znetcontrol
+    -- 下发时用的 @device[$index] 对齐），而不是 s.index 字段（UCI 没有该字段，
+    -- 恒落到 0，导致概览页/规则页永远查不到 znc-r<实际idx>-fwd/in 而误报未下发）。
+    local _dev_seq = 0
     uci:foreach("znetcontrol", "device", function(s)
-        local idx = s.index or 0
+        _dev_seq = _dev_seq + 1
+        local idx = _dev_seq - 1        -- @device[0] -> idx 0
         local target = s.target or ""
         local name = s.name or ("规则" .. tostring(idx))
 
