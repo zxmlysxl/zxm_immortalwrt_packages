@@ -148,14 +148,10 @@ function refreshDevices() {
                            '</div>' +
                            '</div>';
 
-                    // 状态列：在线/离线 + 是否已配规则
+                    // 状态列：管控规则 与 黑名单 两个按钮水平同行
                     html += '<div class="td status-cell">' +
-                           '<div class="device-status">';
-                    html += '<div class="status-online ' + (online ? 'on' : 'off') + '">' +
-                           (online ? '在线' : '离线') + '</div>';
-
-                    // 管控规则 与 黑名单 两个按钮水平排列
-                    html += '<div class="status-actions-row">';
+                           '<div class="device-status">' +
+                           '<div class="status-actions-row">';
 
                     if (isConfigured) {
                         html += '<div class="status-container configured">' +
@@ -470,16 +466,6 @@ style.textContent = `
     }
     .ipv6-none { color: var(--znc-secondary-text); }
     .device-sources { font-size: 11px; color: var(--znc-secondary-text); margin-top: 4px; }
-    .status-online {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-        font-weight: 600;
-        margin-bottom: 6px;
-    }
-    .status-online.on { background: var(--znc-success-bg); color: var(--znc-success-text); }
-    .status-online.off { background: var(--znc-danger-bg); color: var(--znc-danger-text); }
     .device-offline { opacity: 0.75; }
 
     /* IP地址框 - 固定宽度 */
@@ -620,12 +606,13 @@ style.textContent = `
         width: 100%;
     }
 
-    /* 状态容器样式 */
+    /* 状态容器样式：两个容器水平同行（管控 + 黑名单） */
     .status-container {
         display: flex;
         align-items: center;
-        gap: 10px;
-        width: 100%;
+        gap: 8px;
+        flex: 1 1 0;
+        min-width: 0;
     }
     
     .status-icon {
@@ -676,13 +663,14 @@ style.textContent = `
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
         border: none;
-        padding: 10px 16px;
+        padding: 8px 14px;
         border-radius: 6px;
-        font-size: 13px;
+        font-size: 12.5px;
         font-weight: 500;
         cursor: pointer;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 6px;
         transition: all 0.3s ease;
         box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
@@ -694,11 +682,8 @@ style.textContent = `
         box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
     }
 
-    /* 已加入黑名单 */
+    /* 已加入黑名单：与「已添加管控」同行显示，去掉原竖排分隔线 */
     .bl-configured {
-        margin-top: 6px;
-        padding-top: 6px;
-        border-top: 1px dashed var(--znc-border);
     }
 
     .bl-configured .status-icon {
@@ -719,11 +704,8 @@ style.textContent = `
         text-overflow: ellipsis;
     }
 
-    /* 加入黑名单按钮 */
+    /* 加入黑名单按钮：未加入时与「添加管控规则」同行显示 */
     .bl-not-configured {
-        margin-top: 6px;
-        padding-top: 6px;
-        border-top: 1px dashed var(--znc-border);
     }
 
     .add-bl-btn {
@@ -737,6 +719,7 @@ style.textContent = `
         cursor: pointer;
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 6px;
         transition: all 0.3s ease;
         box-shadow: 0 2px 4px rgba(176, 42, 55, 0.28);

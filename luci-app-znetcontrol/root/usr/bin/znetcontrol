@@ -612,40 +612,71 @@ END { flush() }
 ' /etc/config/znetcontrol
 }
 
-sync_blacklist() {
-    _bl_idx=0
-    _bl_n=0
-    _bl_macs=""
-    _bl_ips=""
-    _bl_ip6s=""
-    _bl_boost=""
+# ==========================================================
+# 【2.3.17】MAC 黑名单「保存并应用」门控
+#   apply 时由 LuCI 调 `znetcontrol blacklist-apply`: 校验已提交配置里的黑名单,
+#   写 /var/run/znetcontrol.blacklist 并原子置 apply 标志 /var/run/znetcontrol.blapply。
+#   之后 start / sync 都按该标志下发(幂等); 无标志则绝不下发黑名单,
+#   即「普通保存不生效, 必须点保存并应用」。
+# ==========================================================
+BL_APPLY_FLAG="/var/run/$NAME.blapply"
 
-    # 只读已提交配置(见 blacklist_committed_entries 的说明)
+# 把 /var/run/znetcontrol.blacklist 里的条目写进 nft 集合(幂等: 先删后写)
+_blacklist_push_nft() {
+    [ -f "/var/run/$NAME.blacklist" ] || return 0
+    _bl_macs=""; _bl_ips=""; _bl_ip6s=""
+    while IFS="|" read -r _mac _ip _b6 _bboost; do
+        [ -z "$_mac$_ip$_b6" ] && continue
+        [ -n "$_mac" ] && _bl_macs="$_bl_macs $_mac"
+        [ -n "$_ip" ] && _bl_ips="$_bl_ips $_ip"
+        [ -n "$_b6" ] && _bl_ip6s="$_bl_ip6s $_b6"
+    done < "/var/run/$NAME.blacklist" 2>/dev/null
+    # 重建三个黑名单集合再写入元素, 保证与已提交配置一致
+    nft delete set inet znetcontrol bl_mac 2>/dev/null || true
+    nft add set inet znetcontrol bl_mac "{ type ether_addr; flags interval; }" 2>/dev/null || true
+    nft delete set inet znetcontrol bl_ip 2>/dev/null || true
+    nft add set inet znetcontrol bl_ip "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
+    nft delete set inet znetcontrol bl_ip6 2>/dev/null || true
+    nft add set inet znetcontrol bl_ip6 "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
+    [ -n "$_bl_macs" ] && { nft add element inet znetcontrol bl_mac "{ $_bl_macs }" 2>/dev/null || log "WARN: 写入 bl_mac 失败: $_bl_macs"; }
+    [ -n "$_bl_ips" ] && { nft add element inet znetcontrol bl_ip "{ $_bl_ips }" 2>/dev/null || log "WARN: 写入 bl_ip 失败: $_bl_ips"; }
+    [ -n "$_bl_ip6s" ] && { nft add element inet znetcontrol bl_ip6 "{ $_bl_ip6s }" 2>/dev/null || log "WARN: 写入 bl_ip6 失败: $_bl_ip6s"; }
+    info "黑名单已下发: MAC $(echo $_bl_macs | wc -w) 个 / IPv4 $(echo $_bl_ips | wc -w) 个 / IPv6 $(echo $_bl_ip6s | wc -w) 个"
+}
+
+# 校验已提交配置里的启用黑名单, 生成 /var/run/znetcontrol.blacklist(每行 mac|ip|ip6|boost)
+# 返回 0 成功 / 1 校验失败(有非法条目)
+_blacklist_validate() {
+    _bl_n=0
+    : > "/var/run/$NAME.blacklist" 2>/dev/null
     _bl_lines=$(blacklist_committed_entries)
     while IFS="|" read -r _mac _ip _b6 _bboost; do
         [ -z "$_mac$_ip$_b6" ] && continue
-        _bl_idx=$((_bl_idx + 1))
+        _ok=1
         if [ -n "$_mac" ]; then
             _m=$(echo "$_mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-            if is_valid_mac "$_m"; then
-                _bl_macs="$_bl_macs $_m"
-                _bl_n=$((_bl_n + 1))
-                [ "$_bboost" = "1" ] && _bl_boost="$_bl_boost $_m"
-            else
-                log "ERROR: 黑名单第 $_bl_idx 条 MAC 非法，已跳过: [$_mac]"
-            fi
+            is_valid_mac "$_m" || { log "ERROR: 黑名单 MAC 非法，已跳过: [$_mac]"; _ok=0; }
+        else
+            _m=""
         fi
         if [ -n "$_ip" ]; then
-            _bl_ips="$_bl_ips $_ip"
-            _bl_n=$((_bl_n + 1))
+            is_valid_ipv4 "$_ip" || { log "ERROR: 黑名单 IPv4 非法，已跳过: [$_ip]"; _ok=0; }
         fi
-        if [ -n "$_b6" ]; then
-            _bl_ip6s="$_bl_ip6s $_b6"
+        if [ "$_ok" = "1" ]; then
+            printf '%s|%s|%s|%s\n' "$_m" "$_ip" "$_b6" "$_bboost" >> "/var/run/$NAME.blacklist"
             _bl_n=$((_bl_n + 1))
         fi
     done <<EOF
 $_bl_lines
 EOF
+    info "黑名单校验完成: 启用 $_bl_n 条"
+    return 0
+}
+
+sync_blacklist() {
+    # 【2.3.17】受 apply 标志门控: 没点「保存并应用」就绝不下发/不动 nft
+    [ -f "$BL_APPLY_FLAG" ] || return 0
+    _blacklist_push_nft
 }
 
 # 打印黑名单当前状态（供界面/人工排查）
@@ -1423,8 +1454,17 @@ case "$crrun" in
         
         init_timecontrol
 
-        # 【2.3.14】初始化后同步黑名单（独立于时间规则）
-        sync_blacklist
+        # 【2.3.17】黑名单同步（受 apply 标志门控）：
+        #   有 apply 标志 -> 按已校验的 /var/run/znetcontrol.blacklist 下发 nft；
+        #   无 apply 标志 -> 清空 nft 黑名单集合（boot / 服务刚启动时，
+        #   还没点「保存并应用」前，黑名单不应生效）。
+        if [ -f "$BL_APPLY_FLAG" ]; then
+            sync_blacklist
+        else
+            nft flush set inet znetcontrol bl_mac 2>/dev/null || true
+            nft flush set inet znetcontrol bl_ip 2>/dev/null || true
+            nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
+        fi
         
         # ===== 【2.3.11-fix】只清理非法残留，不清空合法元素 =====
         # 上一版这里用 nft flush set 清空 mac_forward/mac_input，
@@ -1496,6 +1536,8 @@ case "$crrun" in
         # ===== 结束 =====
         info "停止时间控制服务"
         stop_timecontrol
+        # 【2.3.17】停服务同时清掉黑名单 apply 标志，避免下次 start 误下发
+        rm -f "$BL_APPLY_FLAG" 2>/dev/null
         info "所有防火墙规则已清除"
         ;;
         
@@ -1557,6 +1599,21 @@ case "$crrun" in
         sync_print_stat
         ;;
     
+    "blacklist-apply")
+        # 【2.3.17】保存并应用：校验已提交配置里的启用黑名单，
+        # 写 /var/run/znetcontrol.blacklist，原子置 apply 标志，
+        # 并立即下发 nft。此后 sync / start 都按该标志下发（幂等）。
+        if ! _blacklist_validate; then
+            log "ERROR: blacklist-apply 校验失败，不下发"
+            exit 1
+        fi
+        # 原子写 apply 标志
+        echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$BL_APPLY_FLAG.tmp" 2>/dev/null
+        mv "$BL_APPLY_FLAG.tmp" "$BL_APPLY_FLAG" 2>/dev/null
+        _blacklist_push_nft
+        exit 0
+        ;;
+
     "blacklist-sync")
         # 【2.3.14】仅同步黑名单，供 LuCI 保存后立即生效（不动时间规则）
         sync_blacklist

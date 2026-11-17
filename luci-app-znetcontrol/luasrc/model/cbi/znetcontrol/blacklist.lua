@@ -101,24 +101,28 @@ end
 -- 另外守护进程 znetcontrolctrl 每 30s 跑一次 znetcontrol sync，
 -- 而 sync_blacklist 读的是 /etc/config/znetcontrol（已提交配置），
 -- 因此暂存区里的改动不会被提前下发 —— 符合「必须点保存并应用才生效」。
+-- 【2.3.17】改为「apply 标志门控」：不再依赖 CBI 钩子触发时机，
+-- 也不再依赖守护进程 30s 轮询。流程：
+--   1) on_after_commit (只在 apply 路径触发): uci commit 已提交配置，
+--      再调 `znetcontrol blacklist-apply` —— 它校验已提交配置里的启用
+--      黑名单、写 /var/run/znetcontrol.blacklist、原子置 apply 标志、
+--      并立即下发 nft。普通「保存」不会到这里，故不生效。
+--   2) 之后的 znetcontrol start / sync（守护 30s、ucitrack reload、boot）
+--      都按 apply 标志下发；没有标志则绝不下发黑名单（start 还会清空
+--      nft 里的黑名单集合），实现「保存不生效、必须保存并应用」。
+--   3) on_init / on_load 清掉残留的 apply 标志：页面重开/重载时回到
+--      「未应用」状态，防止上次应用残留导致新页面一保存就误下发。
+function m.on_init(self)
+    sys.call("rm -f /var/run/znetcontrol.blapply >/dev/null 2>&1")
+end
+
+function m.on_load(self)
+    sys.call("rm -f /var/run/znetcontrol.blapply >/dev/null 2>&1")
+end
+
 function m.on_after_commit(self)
     uci:commit("znetcontrol")
-    -- 服务没跑时 start 会自己同步；跑着的话这里单独同步黑名单
-    local running = (sys.call("pidof znetcontrol >/dev/null 2>&1") == 0)
-    if running then
-        sys.call("/usr/bin/znetcontrol blacklist-sync >/dev/null 2>&1")
-    else
-        -- 服务未启动但有启用的黑名单条目时，把服务拉起来
-        local any_enabled = false
-        uci:foreach("znetcontrol", "blacklist", function(sec)
-            if sec.enable ~= "0" and sec.enable ~= "false" then
-                any_enabled = true
-            end
-        end)
-        if any_enabled then
-            sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
-        end
-    end
+    sys.call("/usr/bin/znetcontrol blacklist-apply >/dev/null 2>&1")
     return true
 end
 
