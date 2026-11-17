@@ -217,10 +217,25 @@ log() {
 # 只跑一次（不放进 while 循环，避免每 30s 重复下发）；blacklist-apply 幂等（有则写、无则清空）。
 znetcontrol blacklist-apply >/dev/null 2>&1
 
+# 【2.3.22】重载请求标志：保存并应用（reload_service）kill -HUP 守护 ->
+# 守护 trap HUP 时 touch 标志 -> 主循环下一轮（不睡 30s）立即重载，
+# 让"保存并应用"后时间规则/派生集合即刻生效。
+ZNC_RELOAD_REQ=/var/run/znetcontrol.reload_req
+trap "touch $ZNC_RELOAD_REQ 2>/dev/null" HUP
+trap "exit 0" TERM INT
+
 while :; do
     process_devices
     # 同步"由 MAC 规则派生出的终端 IP"集合
     # 终端 IP 可能变化（续租/静态改配），需周期性刷新双保险规则
     znetcontrol sync >/dev/null 2>&1
+    # 【2.3.22】HUP 请求重载：存在标志则本轮再处理一次（不等 30s 休眠）
+    if [ -f "$ZNC_RELOAD_REQ" ]; then
+        log "【HUP】检测到重载请求，立即重载规则 + 派生集合"
+        rm -f "$ZNC_RELOAD_REQ" 2>/dev/null
+        process_devices
+        znetcontrol sync >/dev/null 2>&1
+        continue
+    fi
     sleep 30
 done

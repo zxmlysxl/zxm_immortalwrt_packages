@@ -239,10 +239,10 @@ reload_service() {
     # 旧逻辑读 pidfile + znetcontrol start（杀守护）-> procd crash loop；
     # 且 pidfile 不一致时误判"规则进程不在"-> 跳过 nft 重建 -> 时间规则未下发。
     if pgrep -f "znetcontrolctrl" >/dev/null 2>&1; then
-        # 守护活着：不杀守护，用 znetcontrol sync 重载派生 IP 集合 + 黑名单；
-        # 时间规则 nft 由守护 30s 主循环 process_devices（znetcontrol add）自动重建。
-        /usr/bin/znetcontrol sync >/dev/null 2>&1
-        log "reload: 守护活着，znetcontrol sync 重载（不杀守护，避免 procd crash）"
+        # 守护活着：不杀守护，kill -HUP 触发守护立即重载（标志文件，不等 30s）
+        # -> 时间规则/派生集合/黑名单即刻生效。
+        for p in $(pgrep -f "znetcontrolctrl"); do kill -HUP $p 2>/dev/null; done
+        log "reload: 守护活着，HUP 触发立即重载（不杀守护，避免 procd crash）"
         return 0
     fi
     log "reload: 守护不在，跳过 nft 重载（procd respawn 拉起守护后自动重建）"
