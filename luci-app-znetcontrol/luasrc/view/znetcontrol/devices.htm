@@ -26,10 +26,10 @@ if (document.readyState === 'loading') {
     
     <div class="table cbi-section-table" id="device-table">
         <div class="tr table-titles">
-            <div class="th" style="width: 15%;"><%:IP地址%></div>
+            <div class="th" style="width: 18%;"><%:IP地址%></div>
             <div class="th" style="width: 21%;"><%:IPv6地址%></div>
             <div class="th" style="width: 19%;"><%:MAC地址%></div>
-            <div class="th" style="width: 14%;"><%:主机名%></div>
+            <div class="th" style="width: 12%;"><%:主机名%></div>
             <div class="th" style="width: 30%;"><%:状态%></div>
         </div>
         <div id="device-list">
@@ -446,7 +446,7 @@ style.textContent = `
     }
     
     /* 表格列宽 */
-    .ip-address-cell { width: 20%; min-width: 180px; }
+    .ip-address-cell { width: 22%; min-width: 200px; }
     .mac-address-cell { width: 25%; min-width: 200px; }
     .hostname-cell { width: 25%; }
     .status-cell { width: 32%; }
@@ -468,7 +468,7 @@ style.textContent = `
     .device-sources { font-size: 11px; color: var(--znc-secondary-text); margin-top: 4px; }
     .device-offline { opacity: 0.75; }
 
-    /* IP地址框 - 固定宽度 */
+    /* IP地址框 - 宽度随内容撑开，保证 4 节全 3 位数 IP(如 192.168.255.254)不截断 */
     .ip-address-box {
         font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
         font-size: 13px;
@@ -479,10 +479,10 @@ style.textContent = `
         color: var(--znc-primary-text);
         font-weight: 500;
         display: inline-block;
-        width: 140px; /* 固定宽度 */
+        min-width: 150px; /* 最小宽度，内容更长时可撑开 */
         text-align: center;
         white-space: nowrap;
-        overflow: hidden;
+        overflow: visible;
         box-sizing: border-box;
         letter-spacing: 0.5px;
     }
@@ -490,9 +490,7 @@ style.textContent = `
     /* IP地址文字 */
     .ip-address-text {
         display: inline-block;
-        width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     
     /* MAC地址框 - 固定宽度 */
