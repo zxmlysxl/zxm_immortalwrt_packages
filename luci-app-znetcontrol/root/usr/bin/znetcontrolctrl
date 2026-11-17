@@ -195,6 +195,12 @@ log() {
     echo "[$d] INFO: $@" >>/var/log/znetcontrol.log
 }
 
+# 【2.3.22】守护每次起来先恢复一次黑名单 nft（跟规则表一样"起守护即恢复"）。
+# 无论是 procd 因 UCI 变更 respawn、还是 init start，都必经此处（while 循环前）；
+# stop 会清 nft 表，这里把已提交 UCI 里的启用黑名单写回，保证概览页"已下发"稳定。
+# 只跑一次（不放进 while 循环，避免每 30s 重复下发）；blacklist-apply 幂等（有则写、无则清空）。
+znetcontrol blacklist-apply >/dev/null 2>&1
+
 while :; do
     process_devices
     # 同步"由 MAC 规则派生出的终端 IP"集合

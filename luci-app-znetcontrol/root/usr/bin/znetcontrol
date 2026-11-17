@@ -1462,16 +1462,11 @@ case "$crrun" in
         if [ -f "$BL_APPLY_FLAG" ]; then
             sync_blacklist
         else
-            # 检查 UCI 里是否有已提交的启用黑名单条目
-            _bl_committed="$(blacklist_committed_entries 2>/dev/null | grep -v '^[[:space:]]*$')"
-            if [ -n "$_bl_committed" ]; then
-                info "服务重启: 按已提交配置恢复黑名单"
-                _blacklist_validate && _blacklist_push_nft
-            else
-                nft flush set inet znetcontrol bl_mac 2>/dev/null || true
-                nft flush set inet znetcontrol bl_ip 2>/dev/null || true
-                nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
-            fi
+            # 黑名单的"重启/boot 自动恢复"由 znetcontrolctrl 主循环前的一次性 blacklist-apply 负责
+            # （读 /etc/config 已提交条目，有则写、无则清空）。本处只管本次启动是否携带待下发黑名单。
+            nft flush set inet znetcontrol bl_mac 2>/dev/null || true
+            nft flush set inet znetcontrol bl_ip 2>/dev/null || true
+            nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
         fi
         
         # ===== 【2.3.11-fix】只清理非法残留，不清空合法元素 =====
