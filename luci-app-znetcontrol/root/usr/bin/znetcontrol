@@ -698,6 +698,32 @@ sync_print_blacklist() {
 #     -> MAC 的 IPv4 写入 ip_mac、IPv6 写入 ip6_mac（源 IP 双保险）
 #     -> MAC 本身写入 mac_forward（chain=input 时另写 mac_input）作为保底
 # 每一步失败都写日志，并记录"某规则为何没进集合"。
+# 【2.3.22】立即处理时间规则 add/del（reload_service 调 sync 时同步生效，不等守护 30s）
+# 遍历 UCI enable=1 的规则立即 znetcontrol add；IDLIST 里有但已停用的立即 znetcontrol del。
+znc_apply_time_rules_now() {
+    [ -z "$TABLE" ] && return 0
+    command -v nft >/dev/null 2>&1 || return 0
+    local enabled=" "
+    local i en
+    for i in $(seq 0 200); do
+        en=$(uci -q get "znetcontrol.@device[$i].enable" 2>/dev/null)
+        [ -n "$en" ] || break
+        [ "$en" = "1" ] && enabled="$enabled $i "
+    done
+    # 1. 启用规则立即 add（幂等）
+    for i in $enabled; do
+        znetcontrol add $i >/dev/null 2>&1
+    done
+    # 2. IDLIST 里残留的已停用规则立即 del
+    local rid
+    for rid in $(cat $IDLIST 2>/dev/null | sed 's/!//g'); do
+        echo "$enabled" | grep -q " $rid " || {
+            znetcontrol del $rid >/dev/null 2>&1
+            sed -i "/!$rid!/d" $IDLIST 2>/dev/null
+        }
+    done
+}
+
 sync_mac_ip_sets() {
     if [ -z "$bin_nft" ]; then
         log "WARN: sync_mac_ip_sets: 系统无 nft，跳过集合同步"
@@ -1596,6 +1622,12 @@ case "$crrun" in
         fi
         sync_mac_ip_sets
         sync_blacklist
+        # 【2.3.22】立即处理时间规则（add/del），让 reload_service 调 sync 时
+        # nft 同步更新，不依赖守护 30s 主循环（守护在 sleep，touch 标志要等醒才检测）。
+        # 遍历启用规则立即 add，IDLIST 残留（已停用）立即 del。
+        znc_apply_time_rules_now
+        # 打印每条规则为何（没）进入共享集合
+        # 说明：znetcontrolctrl 定时调用时输出被重定向到 /dev/null，不刷日志；
         # 打印每条规则为何（没）进入共享集合
         # 说明：znetcontrolctrl 定时调用时输出被重定向到 /dev/null，不刷日志；
         #       手工执行 "znetcontrol sync" 可直接看到每条规则的状态
