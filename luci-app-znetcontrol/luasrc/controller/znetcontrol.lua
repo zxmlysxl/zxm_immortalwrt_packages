@@ -428,6 +428,8 @@ function action_get_status(return_data)
         fd:close()
     end
 
+    -- 【2.3.22】"当前生效规则" = 已下发(IDLIST 有) AND 当前在生效时段(znetcontrol check 通过)。
+    -- 旧版数所有 IDLIST（含不在生效时段的周末/定时规则）-> 虚高。
     local idlist_file = "/var/run/znetcontrol.idlist"
     if nixio.fs.access(idlist_file) then
         local fd = io.open(idlist_file, "r")
@@ -435,8 +437,13 @@ function action_get_status(return_data)
             local content = fd:read("*all")
             fd:close()
             if content then
-                for _ in content:gmatch("![0-9]+!") do
-                    active_count = active_count + 1
+                for rid in content:gmatch("![0-9]+!") do
+                    rid = rid:gsub("!","")
+                    -- 仅当该规则当前在生效时段内才计入"当前生效"
+                    local ok = sys.call("/usr/bin/znetcontrol check "..rid.." >/dev/null 2>&1")
+                    if ok == 0 then
+                        active_count = active_count + 1
+                    end
                 end
             end
         end
