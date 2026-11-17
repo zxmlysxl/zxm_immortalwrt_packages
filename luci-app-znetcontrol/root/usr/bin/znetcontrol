@@ -1456,14 +1456,22 @@ case "$crrun" in
 
         # 【2.3.17】黑名单同步（受 apply 标志门控）：
         #   有 apply 标志 -> 按已校验的 /var/run/znetcontrol.blacklist 下发 nft；
-        #   无 apply 标志 -> 清空 nft 黑名单集合（boot / 服务刚启动时，
-        #   还没点「保存并应用」前，黑名单不应生效）。
+        #   无 apply 标志 -> 按 /etc/config 已提交配置恢复黑名单（boot / 服务重启场景）：
+        #     · 有已提交启用条目 -> 重建 /var/run 文件并下发（保存并应用是持久操作，重启不丢）
+        #     · 无已提交启用条目 -> 清空 nft 黑名单集合（未配过黑名单，保持干净）
         if [ -f "$BL_APPLY_FLAG" ]; then
             sync_blacklist
         else
-            nft flush set inet znetcontrol bl_mac 2>/dev/null || true
-            nft flush set inet znetcontrol bl_ip 2>/dev/null || true
-            nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
+            # 检查 UCI 里是否有已提交的启用黑名单条目
+            _bl_committed="$(blacklist_committed_entries 2>/dev/null | grep -v '^[[:space:]]*$')"
+            if [ -n "$_bl_committed" ]; then
+                info "服务重启: 按已提交配置恢复黑名单"
+                _blacklist_validate && _blacklist_push_nft
+            else
+                nft flush set inet znetcontrol bl_mac 2>/dev/null || true
+                nft flush set inet znetcontrol bl_ip 2>/dev/null || true
+                nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
+            fi
         fi
         
         # ===== 【2.3.11-fix】只清理非法残留，不清空合法元素 =====

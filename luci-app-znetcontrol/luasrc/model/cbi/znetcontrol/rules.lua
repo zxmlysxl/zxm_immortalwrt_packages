@@ -71,6 +71,10 @@ end
 -- 确保全局设置存在
 ensure_global_settings()
 
+-- 【2.3.22 修复方案 B】去掉 apply_on_parse，恢复 LuCI 标准“保存并应用”倒计时。
+-- 下发逻辑从 on_after_apply 挪到 on_after_commit（cbi.lua 403 行，apply 块内一定触发，
+-- 不依赖 apply_on_parse），并判断 cbi.apply 才下发（普通保存不碰 nft）。
+-- 下面的 on_after_commit 里已含：处理待删除 + 保存并应用时服务重启下发。
 -- ========== 主要规则段 ==========
 s = m:section(TypedSection, "device", translate("规则列表"))
 s.template = "cbi/tblsection"
@@ -354,6 +358,7 @@ function m.on_after_commit(self)
     return true
 end
 
+-- 保留 on_after_apply 兼容（apply_on_parse 不设时不会触发，仅兑底）
 function m.on_after_apply(self)
     -- 提交配置到文件
     uci:commit("znetcontrol")

@@ -396,11 +396,12 @@ function M.blacklist_status_js(url)
           var r=filtered[i];
           var en=r.enable?'已启用':'未启用';
           var enc=r.enable?'ok':'off';
-          var inft=r.in_nft?'已在 nft':'未下发';
-          var inftc=r.in_nft?'ok':'bad';
-          var st=r.in_nft?'已下发':'未下发';
-          var stc=r.in_nft?'ok':'bad';
-          var cells=[esc(r.name||'-'),esc(r.target||'-'),esc(r.type||''),en,badge(inft,inftc),badge(st,stc)];
+          var enr=r.enable===true||r.enable==='1'||r.enable==='on'||r.enable==='true';
+          var inft,inftrc,st,src;
+          if(!enr){ inft='未启用'; inftrc='off'; st='未启用（不下发）'; src='off'; }
+          else if(r.in_nft){ inft='已在 nft'; inftrc='ok'; st='已下发'; src='ok'; }
+          else { inft='未下发'; inftrc='bad'; st='已启用但未下发'; src='bad'; }
+          var cells=[esc(r.name||'-'),esc(r.target||'-'),esc(r.type||''),en,badge(inft,inftrc),badge(st,src)];
           h+='<tr>'+cells.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';
         }
         body.innerHTML=h;

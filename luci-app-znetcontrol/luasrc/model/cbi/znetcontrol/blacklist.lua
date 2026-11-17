@@ -19,6 +19,14 @@ local function ensure_settings()
 end
 ensure_settings()
 
+-- 【2.3.22 最终】下发在 on_after_commit（commit 阶段，nft 按下发新 UCI 写好）。
+-- 绝不调 uci:commit（会清掉暂存，导致标准 apply 报“没有待应用的更改”、倒计时丢失）。
+-- blacklist-apply 脚本内部用 `uci -q get` 读已提交 UCI，commit 完成后值已是最新，直接跑即可。
+function m.on_after_commit(self)
+	sys.call("/usr/bin/znetcontrol blacklist-apply >/dev/null 2>&1")
+	sys.call('logger -t znetcontrol "黑名单保存并应用 → blacklist-apply 下发（commit 阶段，无 uci:commit 以免清暂存）"')
+end
+
 s = m:section(TypedSection, "blacklist", translate("黑名单列表"),
     translate("填写 MAC 地址或 IP 地址之一即可。推荐用 MAC（设备换 IP 后依然有效）。"))
 s.anonymous = true
@@ -92,29 +100,6 @@ function s.create(self, section)
     uci:set("znetcontrol", id, "enable", "1")
     uci:set("znetcontrol", id, "boost", "0")
     return id
-end
-
--- 仅在「保存并应用」(apply) 后下发到 nft。
--- LuCI 的 apply 路径（点「保存并应用」）会调 CBI Map 的 on_after_apply 钩子；
--- 普通「保存」只写 /tmp/.uci 暂存区，不会调 on_after_apply。
--- （对齐 rules.lua：它用的也是 on_after_apply；旧版误用 on_after_commit ——
---   LuCI 不认这个钩子名，apply 路径找不到待应用更改，提示"没有待应用的更改"。）
---
--- 【2.3.18】apply 标志门控：不再依赖守护进程 30s 轮询，也不靠 CBI 钩子
---   触发时机。流程：
---   1) on_after_apply（仅 apply 路径触发）: 先 uci commit 把改动落盘，
---      再调 `znetcontrol blacklist-apply` —— 校验已提交配置里的启用黑名单、
---      写 /var/run/znetcontrol.blacklist、原子置 apply 标志、立即下发 nft。
---   2) 之后的 znetcontrol start / sync（守护 30s、ucitrack reload、boot）
---      都按 apply 标志下发；没有标志则绝不下发（start 还会清空 nft 黑名单
---      集合），实现「保存不生效、必须保存并应用」。
---   3) 页面重开/重载时回到「未应用」状态（标志只在 apply 时原子置位，
---      普通保存不碰它），避免残留导致误下发。
-function m.on_after_apply(self)
-    uci:commit("znetcontrol")
-    sys.call("/usr/bin/znetcontrol blacklist-apply >/dev/null 2>&1")
-    -- 不阻止 LuCI 默认的成功后跳转
-    return true
 end
 
 return m
