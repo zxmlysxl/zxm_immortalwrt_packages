@@ -229,13 +229,15 @@ while :; do
     # 同步"由 MAC 规则派生出的终端 IP"集合
     # 终端 IP 可能变化（续租/静态改配），需周期性刷新双保险规则
     znetcontrol sync >/dev/null 2>&1
-    # 【2.3.22】HUP 请求重载：存在标志则本轮再处理一次（不等 30s 休眠）
+    # 【2.3.22】轮询重载标志（每 2s 醒一次，不睡 30s）：
+    # 保存并应用 -> reload_service touch 标志 -> 守护 2s 内检测到 -> 立即重载。
+    # 旧版 sleep 30 后才检测标志 -> 保存后最多 30s 才生效（抖动：有时快有时慢 20s+）。
     if [ -f "$ZNC_RELOAD_REQ" ]; then
-        log "【HUP】检测到重载请求，立即重载规则 + 派生集合"
+        log "【重载】检测到请求，立即重载规则 + 派生集合"
         rm -f "$ZNC_RELOAD_REQ" 2>/dev/null
         process_devices
         znetcontrol sync >/dev/null 2>&1
         continue
     fi
-    sleep 30
+    sleep 2
 done
