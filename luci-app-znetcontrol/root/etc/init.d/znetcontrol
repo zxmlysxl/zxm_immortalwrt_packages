@@ -235,13 +235,17 @@ stop_service() {
 reload_service() {
     # UCI 变更统一入口: 先无条件重写 cron 块(不依赖规则服务), 再处理规则服务
     sched_write
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-        kill -HUP "$(cat "$PIDFILE")" 2>/dev/null
-        /usr/bin/znetcontrol start >/dev/null 2>&1
-        log "reload: 规则服务已重载, 定时任务块已重写"
+    # 【2.3.22】用 pgrep 可靠判断守护在不在（不依赖 procd pidfile 避免误判"不在"）。
+    # 旧逻辑读 pidfile + znetcontrol start（杀守护）-> procd crash loop；
+    # 且 pidfile 不一致时误判"规则进程不在"-> 跳过 nft 重建 -> 时间规则未下发。
+    if pgrep -f "znetcontrolctrl" >/dev/null 2>&1; then
+        # 守护活着：不杀守护，用 znetcontrol sync 重载派生 IP 集合 + 黑名单；
+        # 时间规则 nft 由守护 30s 主循环 process_devices（znetcontrol add）自动重建。
+        /usr/bin/znetcontrol sync >/dev/null 2>&1
+        log "reload: 守护活着，znetcontrol sync 重载（不杀守护，避免 procd crash）"
         return 0
     fi
-    log "reload: 规则进程不在(或无启用规则), 定时任务块已写入, 跳过规则服务"
+    log "reload: 守护不在，跳过 nft 重载（procd respawn 拉起守护后自动重建）"
     return 0
 }
 
