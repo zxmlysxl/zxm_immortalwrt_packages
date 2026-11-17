@@ -44,7 +44,7 @@ nft_run() {
 is_valid_mac() {
     # 【2.3.11-fix】必须大小写都认：uci 里存的是大写 MAC（00:BB:1C:...），
     # 而上一版校验只匹配小写，导致所有规则被拒绝写入 nft（实测复现）。
-    _m=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+    _m=$(echo "$1" | tr A-Z a-z)
     echo "$_m" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || return 1
     # 排除全零：00:00:00:00:00:00 是无效/广播地址，写进集合会误伤
     case "$_m" in
@@ -180,7 +180,7 @@ parse_target() {
     
     # MAC地址
     elif echo "$target" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
-        echo "mac"; echo "single"; echo "$target" | tr '[:upper:]' '[:lower:]'
+        echo "mac"; echo "single"; echo "$target" | tr A-Z a-z
         return 0
     
     # IPv6地址
@@ -328,7 +328,7 @@ get_device_ip() {
     mac="$1"
     ip=""
     
-    mac=$(echo "$mac" | tr '[:upper:]' '[:lower:]' | sed -e 's/-/:/g' -e 's/ //g')
+    mac=$(echo "$mac" | tr A-Z a-z | sed -e 's/-/:/g' -e 's/ //g')
     
     if [ -f "/proc/net/arp" ]; then
         ip=$(cat /proc/net/arp 2>/dev/null | awk -v search_mac="$mac" '
@@ -538,7 +538,7 @@ nft_set_del() {
 #   4) ip -6 neigh show（lladdr 可能在任意字段位置，逐字段整体比较）
 get_device_ips() {
     mac="$1"
-    lower=$(echo "$mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    lower=$(echo "$mac" | tr A-Z a-z | tr -d ' ')
     dash=$(echo "$lower" | tr ':' '-')
     out=""
 
@@ -654,7 +654,7 @@ _blacklist_validate() {
         [ -z "$_mac$_ip$_b6" ] && continue
         _ok=1
         if [ -n "$_mac" ]; then
-            _m=$(echo "$_mac" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+            _m=$(echo "$_mac" | tr A-Z a-z | tr -d ' ')
             is_valid_mac "$_m" || { log "ERROR: 黑名单 MAC 非法，已跳过: [$_mac]"; _ok=0; }
         else
             _m=""
@@ -736,7 +736,7 @@ sync_mac_ip_sets() {
             dbg "规则 $idx【$nm】当前不在生效时段 -> MAC 不进入共享集合"
             n_skipped=$((n_skipped + 1))
         else
-            mac=$(echo "$tg" | tr '[:upper:]' '[:lower:]')
+            mac=$(echo "$tg" | tr A-Z a-z)
             if ! is_valid_mac "$mac"; then
                 why="MAC非法"
                 log "ERROR: 规则 $idx【$nm】MAC 非法（$mac）-> 不进入集合"
@@ -1057,7 +1057,7 @@ _mac_has_other_active_rule() {
         _tg=$(uci -q get "znetcontrol.@device[$_i].target")
         [ -n "$_en" ] || [ -n "$_tg" ] || break
         if [ "$_i" != "$_id" ] && [ "$_en" = "1" ]; then
-            _tg_l=$(echo "$_tg" | tr '[:upper:]' '[:lower:]')
+            _tg_l=$(echo "$_tg" | tr A-Z a-z)
             if [ "$_tg_l" = "$_mac" ] && check_list "$_i"; then
                 return 0
             fi
@@ -1138,7 +1138,7 @@ timeadd() {
     
     case "$type" in
         "mac")
-            value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+            value=$(echo "$value" | tr A-Z a-z)
             
             case "$GATEWAY_MODE" in
                 "main")
@@ -1200,7 +1200,7 @@ timedel() {
     if [ -n "$bin_nft" ]; then
         case "$type" in
             "mac")
-                value=$(echo "$value" | tr '[:upper:]' '[:lower:]')
+                value=$(echo "$value" | tr A-Z a-z)
                 
                 if [ "$GATEWAY_MODE" = "main" ]; then
                     # 【2.3.11】只删本段自己的 rule（按 comment），
