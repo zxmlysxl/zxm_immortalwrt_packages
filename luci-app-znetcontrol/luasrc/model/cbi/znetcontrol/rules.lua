@@ -40,16 +40,13 @@ local function manage_service_by_rules()
         end)
     end
     
-    -- 根据规则数量控制服务
-    if enabled_count >= 1 then
-        -- 有启用规则时启动服务
-        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
-        return enabled_count, true
-    else
-        -- 没有启用规则时停止服务
-        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-        return enabled_count, false
-    end
+    -- 【2.3.22】不再主动 start/stop 守护。
+    -- 原逻辑 enabled>=1 就 init.d start、=0 就 init.d stop，但 init.d stop/start
+    -- 会 procd delete+open 守护 -> 反复 apply 时 procd 记 crash -> crash loop 7 次
+    -- 后 procd 放弃 respawn -> "服务已停止"一直显示（停用一条规则就停的根因）。
+    -- 改为：守护始终保持运行（procd respawn 保障），nft 清空/重建由 znetcontrol
+    -- 脚本管，不碰 procd 就不 crash loop。
+    return enabled_count, (enabled_count >= 1)
 end
 
 -- ========== 2.3.21：移除管控规则页的"规则下发状态"面板（改为概览页点卡片才显示）=========
@@ -366,15 +363,17 @@ function m.on_after_apply(self)
     -- 根据规则数量控制服务
     local enabled_count, service_running = manage_service_by_rules()
     
-    -- 立即重新加载规则，不等待监控进程
+    -- 【2.3.22 最终】on_after_commit 不碰守护、不杀守护。
+    -- 根因：znetcontrol start 第一行 stop_timecontrol 会 kill znetcontrolctrl ->
+    -- procd 记 crash -> 反复保存并应用累积 7 次 crash -> procd 放弃 respawn ->
+    -- "服务已停止"一直显示（你停用一条规则就停的真凶）。
+    -- 改为：nft 重载交给守护主循环每 30s 的 znetcontrol sync（自动重算派生 IP 集合 + 黑名单），
+    -- 以及 start_timecontrol 的重写。on_after_commit 只清 pending_deletions，不做 nft 重载。
+    -- 代价：保存后 nft 生效延迟 ≤30s（守护下一轮 sync）。守护永不崩，状态准确。
     if service_running then
-        -- 停止并重新启动服务（立即生效）
-        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
-        sys.call("/etc/init.d/znetcontrol start >/dev/null 2>&1")
-        sys.call('logger -t znetcontrol "规则已保存并立即生效，发现 ' .. enabled_count .. ' 条启用规则"')
+        sys.call('logger -t znetcontrol "规则保存并应用 -> 守护 30s 内 sync 自动重载 nft（不杀守护，避免 procd crash）"')
     else
-        sys.call('logger -t znetcontrol "规则已保存，没有启用规则，服务已停止"')
-        sys.call("/etc/init.d/znetcontrol stop >/dev/null 2>&1")
+        sys.call('logger -t znetcontrol "规则保存并应用 -> 无启用规则，守护 sync 将清空 nft（不杀守护）"')
     end
     
     -- 清空待删除列表
