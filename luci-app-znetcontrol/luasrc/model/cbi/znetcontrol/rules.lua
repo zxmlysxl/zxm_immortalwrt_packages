@@ -52,11 +52,8 @@ local function manage_service_by_rules()
     end
 end
 
--- ========== 追加"规则下发状态"面板 ==========
-m.description = (m.description or "") ..
-    "<br><hr>" ..
-    znc_theme.rule_status_html() ..
-    "<script>" .. znc_theme.rule_status_js(znc_theme.api_url("admin/control/znetcontrol/api/rule_status")) .. "</script>"
+-- ========== 2.3.21：移除管控规则页的"规则下发状态"面板（改为概览页点卡片才显示）=========
+-- 规则下发状态表不再追加到管控规则页；由概览页（overview.htm）点卡片触发 zncShowRuleStatus 显示
 -- ========== 结束 ==========
 
 -- ========== 创建全局设置（如果不存在） ==========

@@ -62,37 +62,39 @@ if (document.readyState === 'loading') {
     <fieldset class="cbi-section">
         <legend><%:上网管控规则%></legend>
         <div class="znc-card-row">
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowRuleStatus('total');" title="点击查看总规则下发状态">
                 <div class="znc-card-value" id="total-rules">0</div>
                 <div class="znc-card-label"><%:总规则数%></div>
             </div>
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowRuleStatus('enabled');" title="点击查看启用规则下发状态">
                 <div class="znc-card-value" id="enabled-rules">0</div>
                 <div class="znc-card-label"><%:启用规则数%></div>
             </div>
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowRuleStatus('active');" title="点击查看当前生效规则">
                 <div class="znc-card-value" id="active-rules">0</div>
                 <div class="znc-card-label"><%:当前生效规则%></div>
             </div>
         </div>
+        <div style="font-size:11px;opacity:.6;margin-top:4px;">点击上方卡片查看对应范围的规则下发状态</div>
     </fieldset>
 
     <fieldset class="cbi-section">
         <legend><%:MAC 黑名单%></legend>
         <div class="znc-card-row">
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowBlacklistStatus('total');" title="点击查看黑名单条目下发状态">
                 <div class="znc-card-value" id="bl-total">0</div>
                 <div class="znc-card-label"><%:黑名单条目%></div>
             </div>
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowBlacklistStatus('enabled');" title="点击查看已启用黑名单">
                 <div class="znc-card-value" id="bl-enabled">0</div>
                 <div class="znc-card-label"><%:已启用%></div>
             </div>
-            <div class="znc-card">
+            <div class="znc-card znc-card-click" onclick="zncShowBlacklistStatus('active');" title="点击查看当前已生效黑名单">
                 <div class="znc-card-value" id="bl-active">0</div>
                 <div class="znc-card-label"><%:当前已生效%></div>
             </div>
         </div>
+        <div style="font-size:11px;opacity:.6;margin-top:4px;">点击上方卡片查看对应范围的黑名单下发状态</div>
         <div class="cbi-value">
             <label class="cbi-label"><%:应用状态%></label>
             <div class="cbi-value-field">
@@ -102,6 +104,7 @@ if (document.readyState === 'loading') {
     </fieldset>
     
     <%= znc.rule_status_html() %>
+    <%= znc.blacklist_status_html() %>
 
     <div class="cbi-page-actions">
         <button class="cbi-button cbi-button-apply" onclick="restartService()">
@@ -124,6 +127,7 @@ if (document.readyState === 'loading') {
 
 <script>
 <%= znc.rule_status_js(luci.dispatcher.build_url("admin/control/znetcontrol/api/rule_status")) %>
+<%= znc.blacklist_status_js(luci.dispatcher.build_url("admin/control/znetcontrol/api/blacklist_status")) %>
 // 更快的状态刷新（修复PID显示bug）
 function refreshStatus(force = false) {
     const statusEl = document.getElementById('service-status');
@@ -379,6 +383,8 @@ document.addEventListener('DOMContentLoaded', function() {
     color: var(--znc-secondary-text);
     margin-top: 6px;
 }
+.znc-card-click { cursor: pointer; }
+.znc-card-click:hover { border-color: var(--znc-primary-text); }
 @media (max-width: 480px) {
     .znc-card { flex: 1 1 100%; max-width: none; }
 }

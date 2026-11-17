@@ -93,6 +93,7 @@ function index()
     entry({"admin", "control", "znetcontrol", "api", "get_status"}, call("action_get_status")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "get_devices"}, call("action_get_devices")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "rule_status"}, call("action_rule_status")).leaf = true
+    entry({"admin", "control", "znetcontrol", "api", "blacklist_status"}, call("action_blacklist_status")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "restart"}, call("action_restart")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "start"}, call("action_start")).leaf = true
     entry({"admin", "control", "znetcontrol", "api", "stop"}, call("action_stop")).leaf = true
@@ -1268,6 +1269,71 @@ function action_rule_status()
     http.header("Pragma", "no-cache")
     http.header("Expires", "0")
     http.write_json(result)
+end
+
+-- ========== MAC 黑名单逐条下发状态（2.3.21）==========
+-- 返回每条黑名单: name/comment/target(mac或ip)/enable/in_nft(是否在 nft 集合里)/type
+function action_blacklist_status()
+    local sys = require("luci.sys")
+    local http = require("luci.http")
+    local uci = require("luci.model.uci").cursor()
+
+    -- 读 nft 黑名单集合元素
+    local function set_elements(name)
+        local o = sys.exec("nft list set inet znetcontrol " .. name .. " 2>/dev/null") or ""
+        local s = {}
+        for m in o:gmatch("elements%s*=%s*{([%}]* )") do
+        end
+        for m in o:gmatch("elements%s*=%s*{([^}]*)}") do
+            for e in m:gmatch("[^,%s]+") do s[e:lower():gsub("%-", ":")] = true end
+        end
+        return s
+    end
+    local bl_mac = set_elements("bl_mac")
+    local bl_ip  = set_elements("bl_ip")
+    local bl_ip6 = set_elements("bl_ip6")
+
+    local function is_ipv4(v)
+        v = tostring(v):gsub("%s+", "")
+        return (v:match("^%d+%.%d+%.%d+%.%d+$") ~= nil)
+    end
+    local function is_ipv6(v)
+        v = tostring(v):lower():gsub("%s+", "")
+        return (v:match("^([%x]*:)+[%x:%*]+$") ~= nil)
+    end
+
+    local items = {}
+    uci:foreach("znetcontrol", "blacklist", function(s)
+        local target = s.mac or s.target or s.ip or ""
+        local name = s.comment or s.name or target
+        local enable = (s.enable ~= "0" and s.enable ~= "false" and s.enable ~= "off")
+        local in_nft = false
+        local typ = "mac"
+        if target ~= "" then
+            local key = target:lower():gsub("%s+", ""):gsub("%-", ":")
+            if is_ipv4(target) then
+                typ = "ip"
+                in_nft = (bl_ip[key] == true)
+            elseif is_ipv6(target) then
+                typ = "ip6"
+                in_nft = (bl_ip6[key] == true)
+            else
+                typ = "mac"
+                in_nft = (bl_mac[key] == true)
+            end
+        end
+        items[#items+1] = {
+            name = name,
+            target = target,
+            enable = enable,
+            in_nft = in_nft,
+            type = typ
+        }
+    end)
+
+    http.prepare_content("application/json")
+    http.header("Cache-Control", "no-cache")
+    http.write_json({ rules = items })
 end
 
 

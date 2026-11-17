@@ -216,8 +216,8 @@ function M.api_url(path)
 end
 
 function M.rule_status_html()
-	return [[<div class="cbi-section" id="znc-rule-status-section">
-<h3>规则下发状态</h3>
+	return [[<div class="cbi-section" id="znc-rule-status-section" style="display:none">
+<h3>规则下发状态 <span id="znc-rs-scope" style="font-size:13px;font-weight:400;opacity:.7"></span></h3>
 <style>
 .znc-rs-table{width:100%;border-collapse:collapse;margin-bottom:8px;}
 .znc-rs-table th,.znc-rs-table td{padding:8px 10px;border-bottom:1px solid rgba(128,128,128,.25);text-align:left;font-size:13px;vertical-align:top;}
@@ -255,42 +255,184 @@ function M.rule_status_js(url)
     }
     return h+'</tr>';
   }
-  function render(rows){
+  // scope: 'total'=全部, 'enabled'=仅启用, 'active'=当前生效(启用且在生效时段且已下发)
+  function scopeMatch(r, scope){
+    if(!scope || scope==='total') return true;
+    var en = (r.enable===true || r.enable==='1' || r.enable==='on' || r.enable==='true');
+    if(scope==='enabled') return en;
+    if(scope==='active'){
+      // 当前生效 = 启用 + 时间判定为 in_time + nft 已下发
+      var inTime = (r.time_state==='in_time');
+      var present = (r.nft_present===true);
+      return en && inTime && present;
+    }
+    return true;
+  }
+  function scopeLabel(scope){
+    if(scope==='enabled') return '(启用规则数)';
+    if(scope==='active') return '(当前生效规则)';
+    return '(总规则数)';
+  }
+  function render(rows, scope){
     var body=document.getElementById('znc-rs-body');
     if(!body) return;
-    if(!rows||!rows.length){ body.innerHTML='<tr><td colspan="8">暂无规则</td></tr>'; return; }
-    var h='';
-    for(var i=0;i<rows.length;i++){
-      var r=rows[i];
-      var tc='off';
-      if(r.time_state==='in_time') tc='ok';
-      else if(r.time_state!=='disabled') tc='warn';
-      var nf=r.nft_present?('已下发 handle '+(r.nft_handle||'?')):'未下发';
-      var nfc=r.nft_present?'ok':'bad';
-      var st=r.status||'';
-      var sc='off';
-      if(st.indexOf('已下发并已命中')>=0) sc='ok';
-      else if(st.indexOf('无流量命中')>=0) sc='warn';
-      else if(st.indexOf('未下发')>=0) sc='bad';
-      var pk=(r.packets===null||r.packets===undefined)?'-':String(r.packets);
-      var by=(r.bytes===null||r.bytes===undefined)?'-':fmtBytes(r.bytes);
-      var en=r.enable?'已启用':'未启用';
-      var enc=r.enable?'ok':'off';
-      var tt=r.time_text||'-';
-      h+=row([r.name,r.target,en,tt,nf,pk,by,st],['','',enc,tc,nfc,'','',sc]);
+    if(!rows||!rows.length){ body.innerHTML='<tr><td colspan="8">暂无规则</td></tr>'; }
+    else{
+      var filtered=(scope&&scope!=='total')?rows.filter(function(r){return scopeMatch(r,scope);}):rows;
+      if(!filtered.length){
+        body.innerHTML='<tr><td colspan="8">该筛选条件下暂无规则</td></tr>';
+      } else {
+        var h='';
+        for(var i=0;i<filtered.length;i++){
+          var r=filtered[i];
+          var tc='off';
+          if(r.time_state==='in_time') tc='ok';
+          else if(r.time_state!=='disabled') tc='warn';
+          var nf=r.nft_present?('已下发 handle '+(r.nft_handle||'?')):'未下发';
+          var nfc=r.nft_present?'ok':'bad';
+          var st=r.status||'';
+          var sc='off';
+          if(st.indexOf('已下发并已命中')>=0) sc='ok';
+          else if(st.indexOf('无流量命中')>=0) sc='warn';
+          else if(st.indexOf('未下发')>=0) sc='bad';
+          var pk=(r.packets===null||r.packets===undefined)?'-':String(r.packets);
+          var by=(r.bytes===null||r.bytes===undefined)?'-':fmtBytes(r.bytes);
+          var en=r.enable?'已启用':'未启用';
+          var enc=r.enable?'ok':'off';
+          var tt=r.time_text||'-';
+          h+=row([r.name,r.target,en,tt,nf,pk,by,st],['','',enc,tc,nfc,'','',sc]);
+        }
+        body.innerHTML=h;
+      }
     }
-    body.innerHTML=h;
+    // 标注当前显示范围
+    var sl=document.getElementById('znc-rs-scope');
+    if(sl) sl.textContent=scopeLabel(scope||'total');
     var t=document.getElementById('znc-rs-time');
     if(t) t.textContent='更新时间：'+new Date().toLocaleString();
   }
+  var _lastRows=null, _curScope='total';
   function refresh(){
     var body=document.getElementById('znc-rs-body');
-    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(render).catch(function(e){
+    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(function(data){
+      var rows=(data&&data.rules)?data.rules:(Array.isArray(data)?data:[]);
+      _lastRows=rows;
+      // section 可见时用当前 scope 渲染；不可见时只存数据不渲染
+      var sec=document.getElementById('znc-rule-status-section');
+      if(sec && sec.style.display!=='none') render(rows,_curScope);
+    }).catch(function(e){
       if(body) body.innerHTML='<tr><td colspan="8">加载失败：'+esc(e.message)+'</td></tr>';
     });
   }
+  // 显示/隐藏 + 按 scope 过滤。scope: total/enabled/active
+  window.zncShowRuleStatus=function(scope){
+    _curScope=scope||'total';
+    var sec=document.getElementById('znc-rule-status-section');
+    if(sec) sec.style.display='block';
+    if(_lastRows) render(_lastRows,_curScope);
+    else refresh();
+  };
+  window.zncHideRuleStatus=function(){
+    var sec=document.getElementById('znc-rule-status-section');
+    if(sec) sec.style.display='none';
+  };
   window.zncRefreshRuleStatus=refresh;
-  window.zncRenderRuleStatus=render;
+  window.zncRenderRuleStatus=function(rows,scope){ render(rows,scope); };
+  // 默认隐藏：页面加载不自动 show，等待用户点卡片触发 zncShowRuleStatus
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',refresh); } else { refresh(); }
+})();
+]]
+	return (js:gsub("__ZNC_URL__", function() return url end))
+end
+
+
+-- ========== MAC 黑名单逐条下发状态表（2.3.21，默认隐藏，点卡片才显示）==========
+function M.blacklist_status_html()
+	return [[<div class="cbi-section" id="znc-bl-status-section" style="display:none">
+<h3>黑名单下发状态 <span id="znc-bl-scope" style="font-size:13px;font-weight:400;opacity:.7"></span></h3>
+<style>
+.znc-bl-table{width:100%;border-collapse:collapse;margin-bottom:8px;}
+.znc-bl-table th,.znc-bl-table td{padding:8px 10px;border-bottom:1px solid rgba(128,128,128,.25);text-align:left;font-size:13px;vertical-align:top;}
+.znc-bl-table th{font-weight:600;background:rgba(128,128,128,.10);}
+.znc-bl-foot{font-size:12px;opacity:.7;margin-top:6px;}
+.znc-bl-empty{text-align:center;padding:20px;}
+</style>
+<table class="znc-bl-table">
+<thead><tr><th>名称</th><th>目标</th><th>类型</th><th>启用</th><th>nft 状态</th><th>结论</th></tr></thead>
+<tbody id="znc-bl-body"><tr><td colspan="6" class="znc-bl-empty">正在加载...</td></tr></tbody>
+</table>
+<div class="znc-bl-foot"><button type="button" class="cbi-button cbi-button-action" onclick="zncRefreshBlacklistStatus()">刷新</button> <span id="znc-bl-time"></span></div>
+</div>]]
+end
+
+function M.blacklist_status_js(url)
+	url = url or "api/blacklist_status"
+	local js = [[
+(function(){
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function badge(t,c){ return '<span class="znc-rs-badge '+(c||'off')+'">'+esc(t)+'</span>'; }
+  function scopeMatch(r,scope){
+    if(!scope||scope==='total') return true;
+    var en=(r.enable===true||r.enable==='1'||r.enable==='on'||r.enable==='true');
+    if(scope==='enabled') return en;
+    if(scope==='active') return en && (r.in_nft===true);
+    return true;
+  }
+  function scopeLabel(scope){
+    if(scope==='enabled') return '(已启用)';
+    if(scope==='active') return '(当前已生效)';
+    return '(黑名单条目)';
+  }
+  function render(rows,scope){
+    var body=document.getElementById('znc-bl-body');
+    if(!body) return;
+    if(!rows||!rows.length){ body.innerHTML='<tr><td colspan="6">暂无黑名单</td></tr>'; }
+    else{
+      var filtered=(scope&&scope!=='total')?rows.filter(function(r){return scopeMatch(r,scope);}):rows;
+      if(!filtered.length){ body.innerHTML='<tr><td colspan="6">该筛选条件下暂无黑名单</td></tr>'; }
+      else{
+        var h='';
+        for(var i=0;i<filtered.length;i++){
+          var r=filtered[i];
+          var en=r.enable?'已启用':'未启用';
+          var enc=r.enable?'ok':'off';
+          var inft=r.in_nft?'已在 nft':'未下发';
+          var inftc=r.in_nft?'ok':'bad';
+          var st=r.in_nft?'已下发':'未下发';
+          var stc=r.in_nft?'ok':'bad';
+          var cells=[esc(r.name||'-'),esc(r.target||'-'),esc(r.type||''),en,badge(inft,inftc),badge(st,stc)];
+          h+='<tr>'+cells.map(function(c){return '<td>'+c+'</td>';}).join('')+'</tr>';
+        }
+        body.innerHTML=h;
+      }
+    }
+    var sl=document.getElementById('znc-bl-scope');
+    if(sl) sl.textContent=scopeLabel(scope||'total');
+    var t=document.getElementById('znc-bl-time');
+    if(t) t.textContent='更新时间：'+new Date().toLocaleString();
+  }
+  var _rows=null,_scope='total';
+  function refresh(){
+    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(function(d){
+      _rows=(d&&d.rules)?d.rules:[];
+      var sec=document.getElementById('znc-bl-status-section');
+      if(sec&&sec.style.display!=='none') render(_rows,_scope);
+    }).catch(function(e){
+      var b=document.getElementById('znc-bl-body');
+      if(b) b.innerHTML='<tr><td colspan="6">加载失败：'+esc(e.message)+'</td></tr>';
+    });
+  }
+  window.zncRefreshBlacklistStatus=refresh;
+  window.zncShowBlacklistStatus=function(scope){
+    _scope=scope||'total';
+    var sec=document.getElementById('znc-bl-status-section');
+    if(sec) sec.style.display='block';
+    if(_rows) render(_rows,_scope); else refresh();
+  };
+  window.zncHideBlacklistStatus=function(){
+    var sec=document.getElementById('znc-bl-status-section');
+    if(sec) sec.style.display='none';
+  };
   if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',refresh); } else { refresh(); }
 })();
 ]]
