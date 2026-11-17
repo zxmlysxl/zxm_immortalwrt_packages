@@ -190,7 +190,19 @@ process_devices() {
     # 清理并排序ID列表
     cat $IDLIST 2>/dev/null | sort | uniq > $TMPID 2>/dev/null
     [ -f $TMPID ] && mv $TMPID $IDLIST 2>/dev/null
-    
+
+    # 【2.3.22】清理已停用/已删规则的 nft 残留：
+    # 旧逻辑只遍历 enabled_ids（启用规则），停用规则（enable=0）不在其中，
+    # 其 IDLIST 里的 !N! 永远不被 del -> nft 残留 drop 规则（"未启用却已下发"）。
+    # 现在：对 IDLIST 里有、但不在 enabled_ids 的 id，调 znetcontrol del 移除 nft。
+    for rid in $(cat $IDLIST 2>/dev/null | sed 's/!//g'); do
+        echo " $enabled_ids " | grep -q " $rid " || {
+            log "【停用/已删】规则 $rid 不在启用列表，从防火墙移除 nft"
+            update_device_status $rid "del"
+            sed -i "/!${rid}!/d" $IDLIST 2>/dev/null
+        }
+    done
+
     log "当前防火墙中的规则: $(cat $IDLIST 2>/dev/null | wc -l) 个"
 }
 
