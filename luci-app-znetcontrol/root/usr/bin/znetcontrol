@@ -466,6 +466,18 @@ check_list() {
 }
 
 detect_gateway_mode() {
+    # 【2.3.25】支持 UCI 强制指定模式：znetcontrol.settings.gateway_mode = main | bypass | auto
+    # 自动探测在单网卡场景（虚拟机 / 单臂路由）会误判成旁路由（默认路由与 LAN 同出口），
+    # 此时可用本开关显式指定。auto = 保持自动探测（默认）。
+    _forced=$(config_s_get gateway_mode "auto")
+    if [ "$_forced" = "main" ] || [ "$_forced" = "bypass" ]; then
+        GATEWAY_MODE="$_forced"
+        info "按 UCI 指定使用${_forced}模式（znetcontrol.settings.gateway_mode=${_forced}）"
+        if [ "$GATEWAY_MODE" = "bypass" ]; then
+            BYPASS_GATEWAY=$(ip route show default 2>/dev/null | head -1 | awk '{print $3}')
+        fi
+        return 0
+    fi
     default_gw=$(ip route show default 2>/dev/null | head -1 | awk '{print $3}')
     default_dev=$(ip route show default 2>/dev/null | head -1 | awk '{print $5}')
     lan_iface=$(uci get network.lan.ifname 2>/dev/null || echo "br-lan")
@@ -874,6 +886,107 @@ sync_print_stat() {
     cat "$f" 2>/dev/null
 }
 
+# ==========================================================
+# inet 家族表结构初始化（主路由 / 旁路由共用）
+#
+# 【2.3.25】旁路由模式此前只建表 + forward/input 两条链，不建任何集合、
+# 也不建引用集合的 drop 规则，后果有三：
+#   1) 共享集合(mac_forward / ip_mac 等)写入必然失败，保底机制形同虚设；
+#   2) 黑名单元素写进了 bl_mac，却没有任何规则引用 @bl_mac —— 黑名单在旁路由下
+#      完全不生效（元素在集合里，但没有 drop 规则用它）；
+#   3) 状态页按 comment=znc-r<id>-fwd 定位独立 rule，旁路由却用
+#      <规则名>-forward 命名 —— 规则明明已经写进 nft，状态页永远显示“未下发”。
+# 现在两种模式共用同一套结构，行为完全一致。
+# ==========================================================
+init_nft_family() {
+    nft_run add table inet znetcontrol || log "ERROR: 创建表 inet znetcontrol 失败"
+    # MAC 集合
+    nft_run add set inet znetcontrol mac_forward "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_forward 失败"
+    nft_run add set inet znetcontrol mac_input "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_input 失败"
+    # IP 集合：ip_forward/ip_input 来自"按 IP 管控"的规则
+    nft_run add set inet znetcontrol ip_forward "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_forward 失败"
+    nft_run add set inet znetcontrol ip_input "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_input 失败"
+    nft_run add set inet znetcontrol ip6_forward "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_forward 失败"
+    nft_run add set inet znetcontrol ip6_input "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_input 失败"
+
+    # IP 双保险集合：由 MAC 规则实时解析出的终端 IP 单独存放，
+    # 便于精确回收，不会误删"按 IP 管控"规则写入的地址
+    nft_run add set inet znetcontrol ip_mac "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_mac 失败"
+    nft_run add set inet znetcontrol ip6_mac "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_mac 失败"
+
+    
+    nft_run add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }" || log "ERROR: 创建 forward 链失败"
+    # ether saddr 匹配同时覆盖 IPv4 / IPv6
+    # 兼容集合规则：旧版把 MAC 塞进 mac_forward/mac_input 共享集合。
+    # 新版每段独立 rule（comment=znc-r<id>-fwd/in），集合规则保留
+    # 作为"手工/旧配置残留"的兜底，不影响多段并行。
+    nft_run add rule inet znetcontrol forward ether saddr @mac_forward counter drop comment "block-mac-forward" || log "ERROR: 保底规则 block-mac-forward 创建失败"
+    nft_run add rule inet znetcontrol forward ip saddr @ip_forward drop comment "block-ipv4-forward"
+    nft_run add rule inet znetcontrol forward ip saddr @ip_mac drop comment "block-ipv4-mac-derived"
+    nft_run add rule inet znetcontrol forward ip6 saddr @ip6_forward drop comment "block-ipv6-forward"
+    nft_run add rule inet znetcontrol forward ip6 saddr @ip6_mac drop comment "block-ipv6-mac-derived"
+    
+    nft_run add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }" || log "ERROR: 创建 input 链失败"
+    # 强力控制默认放行 DHCP：让终端能续租、保持在概览/统计页面里可见
+    # 需要"连路由器也彻底断掉"时，把 strong_allow_dhcp 设为 0
+    if [ "$(config_s_get strong_allow_dhcp '1')" = "1" ]; then
+        nft_run add rule inet znetcontrol input ether saddr @mac_input udp dport 67 accept comment "allow-dhcp"
+        nft_run add rule inet znetcontrol input ip saddr @ip_input udp dport 67 accept comment "allow-dhcp"
+    fi
+    nft_run add rule inet znetcontrol input ether saddr @mac_input counter drop comment "block-mac-input" || log "ERROR: 保底规则 block-mac-input 创建失败"
+    nft_run add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
+    nft_run add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
+
+    # ==========================================================
+    # 2.3.14 新增：MAC / IP 黑名单（全天封禁）
+    #
+    # 与"时间规则"完全独立：
+    #   - 独立集合 bl_mac / bl_ip / bl_ip6，独立 comment（bl-mac / bl-ip）
+    #   - 不看时间、不看星期，写入即生效 24 小时
+    #   - 优先级高于时间规则（insert 到链首），随时可一键启停
+    #
+    # 安全约束（重要）：
+    #   - 只在本程序自建的 inet znetcontrol 表内增删规则
+    #   - 绝不修改 firewall.@defaults / 任何 zone 配置
+    #   - 规则全部是 drop（策略仍为 accept），写坏最多"黑名单不生效"，
+    #     不会出现"路由器自己上不了网"
+    # ==========================================================
+    nft_run add set inet znetcontrol bl_mac "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 bl_mac 失败"
+    nft_run add set inet znetcontrol bl_ip "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip 失败"
+    nft_run add set inet znetcontrol bl_ip6 "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip6 失败"
+    nft_run insert rule inet znetcontrol forward ether saddr @bl_mac counter drop comment "bl-mac-forward" || log "ERROR: 黑名单规则 bl-mac-forward 创建失败"
+    nft_run insert rule inet znetcontrol forward ip saddr @bl_ip counter drop comment "bl-ip-forward" || log "ERROR: 黑名单规则 bl-ip-forward 创建失败"
+    nft_run insert rule inet znetcontrol forward ip6 saddr @bl_ip6 counter drop comment "bl-ip6-forward" || log "ERROR: 黑名单规则 bl-ip6-forward 创建失败"
+    # 强力黑名单：连访问路由器本身也断（默认关闭，由 blacklist 段 boost=1 开启时会额外插入）
+    
+    # ==========================================================
+    # 可选：网关钉扎（pin_gateway=1）
+    #
+    # 被控终端若把"网关"改成同网段其它设备（如 AP 的管理 IP），
+    # 其下一跳就从路由器变成了别的二层邻居。钉扎后，被控终端
+    # 只能把帧发给路由器自己的 MAC（或广播/组播），不允许
+    # 把下一跳换成别的设备，从而堵住"改网关绕过管控"的路子。
+    #
+    # 注意：bridge 家族的 forward 钩子只在流量"经由 immortalwrt
+    # 的网桥转发"时才可见；同网段内直连的帧（如 终端→AP）在
+    # immortalwrt 上看不到，此时需要从 AP 侧关闭其路由/NAT 功能。
+    # ==========================================================
+    nft delete table bridge znetcontrol_pin 2>/dev/null || true
+    if [ "$(config_s_get pin_gateway '0')" = "1" ]; then
+lan_mac=$(ip -o link show br-lan 2>/dev/null | awk -F'link/ether ' '{print $2}' | cut -d' ' -f1)
+        if [ -n "$lan_mac" ]; then
+            nft add table bridge znetcontrol_pin
+            nft add set bridge znetcontrol_pin mac_ctl "{ type ether_addr; flags interval; }"
+            nft add set bridge znetcontrol_pin dst_ok "{ type ether_addr; flags interval; elements = { $lan_mac, ff:ff:ff:ff:ff:ff, 01:00:5e:00:00:00/16, 33:33:00:00:00:00/16 } }"
+            nft add chain bridge znetcontrol_pin forward "{ type filter hook forward priority -300; policy accept; }"
+            nft add rule bridge znetcontrol_pin forward ether saddr @mac_ctl ether daddr != @dst_ok drop comment "pin-gateway"
+            info "网关钉扎已启用（只允许发往 $lan_mac）"
+        else
+            info "未取到 br-lan MAC，跳过网关钉扎"
+        fi
+    fi
+}
+
 init_main_route() {
     info "初始化主路由模式"
     
@@ -882,121 +995,22 @@ init_main_route() {
         nft delete table ip znetcontrol 2>/dev/null || true
         nft delete table ip6 znetcontrol 2>/dev/null || true
         nft delete table bridge znetcontrol 2>/dev/null || true
-        
-        # ==========================================================
-        # 主路由模式统一使用 inet 家族（一次覆盖 IPv4 + IPv6）
-        #
-        # 【关键修复】历史版本把 MAC 规则写进 bridge 家族。bridge 家族
-        # 的 forward/input 钩子只能看到"同一个网桥内部的二层转发"和
-        # "送交本机的帧"，根本看不到"路由转发去 WAN"的流量，所以两种
-        # 模式都拦不住上网；而 input 钩子又会把 ARP/DHCP 一起丢掉，
-        # 导致被控终端在所有统计页面里彻底消失。
-        #
-        # 现在的语义：
-        #   forward 钩子 = 出网路径（普通 / 强力 两种模式都拦）
-        #   input  钩子  = 访问路由器本机（仅强力模式拦；放行 DHCP，
-        #                   保证终端能续租、保持在统计页面可见）
-        # ==========================================================
-        nft_run add table inet znetcontrol || log "ERROR: 创建表 inet znetcontrol 失败"
-        # MAC 集合
-        nft_run add set inet znetcontrol mac_forward "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_forward 失败"
-        nft_run add set inet znetcontrol mac_input "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 mac_input 失败"
-        # IP 集合：ip_forward/ip_input 来自"按 IP 管控"的规则
-        nft_run add set inet znetcontrol ip_forward "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_forward 失败"
-        nft_run add set inet znetcontrol ip_input "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_input 失败"
-        nft_run add set inet znetcontrol ip6_forward "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_forward 失败"
-        nft_run add set inet znetcontrol ip6_input "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_input 失败"
-
-        # IP 双保险集合：由 MAC 规则实时解析出的终端 IP 单独存放，
-        # 便于精确回收，不会误删"按 IP 管控"规则写入的地址
-        nft_run add set inet znetcontrol ip_mac "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 ip_mac 失败"
-        nft_run add set inet znetcontrol ip6_mac "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 ip6_mac 失败"
-
-        
-        nft_run add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }" || log "ERROR: 创建 forward 链失败"
-        # ether saddr 匹配同时覆盖 IPv4 / IPv6
-        # 兼容集合规则：旧版把 MAC 塞进 mac_forward/mac_input 共享集合。
-        # 新版每段独立 rule（comment=znc-r<id>-fwd/in），集合规则保留
-        # 作为"手工/旧配置残留"的兜底，不影响多段并行。
-        nft_run add rule inet znetcontrol forward ether saddr @mac_forward counter drop comment "block-mac-forward" || log "ERROR: 保底规则 block-mac-forward 创建失败"
-        nft_run add rule inet znetcontrol forward ip saddr @ip_forward drop comment "block-ipv4-forward"
-        nft_run add rule inet znetcontrol forward ip saddr @ip_mac drop comment "block-ipv4-mac-derived"
-        nft_run add rule inet znetcontrol forward ip6 saddr @ip6_forward drop comment "block-ipv6-forward"
-        nft_run add rule inet znetcontrol forward ip6 saddr @ip6_mac drop comment "block-ipv6-mac-derived"
-        
-        nft_run add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }" || log "ERROR: 创建 input 链失败"
-        # 强力控制默认放行 DHCP：让终端能续租、保持在概览/统计页面里可见
-        # 需要"连路由器也彻底断掉"时，把 strong_allow_dhcp 设为 0
-        if [ "$(config_s_get strong_allow_dhcp '1')" = "1" ]; then
-            nft_run add rule inet znetcontrol input ether saddr @mac_input udp dport 67 accept comment "allow-dhcp"
-            nft_run add rule inet znetcontrol input ip saddr @ip_input udp dport 67 accept comment "allow-dhcp"
-        fi
-        nft_run add rule inet znetcontrol input ether saddr @mac_input counter drop comment "block-mac-input" || log "ERROR: 保底规则 block-mac-input 创建失败"
-        nft_run add rule inet znetcontrol input ip saddr @ip_input drop comment "block-ipv4-input"
-        nft_run add rule inet znetcontrol input ip6 saddr @ip6_input drop comment "block-ipv6-input"
-
-        # ==========================================================
-        # 2.3.14 新增：MAC / IP 黑名单（全天封禁）
-        #
-        # 与"时间规则"完全独立：
-        #   - 独立集合 bl_mac / bl_ip / bl_ip6，独立 comment（bl-mac / bl-ip）
-        #   - 不看时间、不看星期，写入即生效 24 小时
-        #   - 优先级高于时间规则（insert 到链首），随时可一键启停
-        #
-        # 安全约束（重要）：
-        #   - 只在本程序自建的 inet znetcontrol 表内增删规则
-        #   - 绝不修改 firewall.@defaults / 任何 zone 配置
-        #   - 规则全部是 drop（策略仍为 accept），写坏最多"黑名单不生效"，
-        #     不会出现"路由器自己上不了网"
-        # ==========================================================
-        nft_run add set inet znetcontrol bl_mac "{ type ether_addr; flags interval; }" || log "ERROR: 创建集合 bl_mac 失败"
-        nft_run add set inet znetcontrol bl_ip "{ type ipv4_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip 失败"
-        nft_run add set inet znetcontrol bl_ip6 "{ type ipv6_addr; flags interval; }" || log "ERROR: 创建集合 bl_ip6 失败"
-        nft_run insert rule inet znetcontrol forward ether saddr @bl_mac counter drop comment "bl-mac-forward" || log "ERROR: 黑名单规则 bl-mac-forward 创建失败"
-        nft_run insert rule inet znetcontrol forward ip saddr @bl_ip counter drop comment "bl-ip-forward" || log "ERROR: 黑名单规则 bl-ip-forward 创建失败"
-        nft_run insert rule inet znetcontrol forward ip6 saddr @bl_ip6 counter drop comment "bl-ip6-forward" || log "ERROR: 黑名单规则 bl-ip6-forward 创建失败"
-        # 强力黑名单：连访问路由器本身也断（默认关闭，由 blacklist 段 boost=1 开启时会额外插入）
-        
-        # ==========================================================
-        # 可选：网关钉扎（pin_gateway=1）
-        #
-        # 被控终端若把"网关"改成同网段其它设备（如 AP 的管理 IP），
-        # 其下一跳就从路由器变成了别的二层邻居。钉扎后，被控终端
-        # 只能把帧发给路由器自己的 MAC（或广播/组播），不允许
-        # 把下一跳换成别的设备，从而堵住"改网关绕过管控"的路子。
-        #
-        # 注意：bridge 家族的 forward 钩子只在流量"经由 immortalwrt
-        # 的网桥转发"时才可见；同网段内直连的帧（如 终端→AP）在
-        # immortalwrt 上看不到，此时需要从 AP 侧关闭其路由/NAT 功能。
-        # ==========================================================
-        nft delete table bridge znetcontrol_pin 2>/dev/null || true
-        if [ "$(config_s_get pin_gateway '0')" = "1" ]; then
-    lan_mac=$(ip -o link show br-lan 2>/dev/null | awk -F'link/ether ' '{print $2}' | cut -d' ' -f1)
-            if [ -n "$lan_mac" ]; then
-                nft add table bridge znetcontrol_pin
-                nft add set bridge znetcontrol_pin mac_ctl "{ type ether_addr; flags interval; }"
-                nft add set bridge znetcontrol_pin dst_ok "{ type ether_addr; flags interval; elements = { $lan_mac, ff:ff:ff:ff:ff:ff, 01:00:5e:00:00:00/16, 33:33:00:00:00:00/16 } }"
-                nft add chain bridge znetcontrol_pin forward "{ type filter hook forward priority -300; policy accept; }"
-                nft add rule bridge znetcontrol_pin forward ether saddr @mac_ctl ether daddr != @dst_ok drop comment "pin-gateway"
-                info "网关钉扎已启用（只允许发往 $lan_mac）"
-            else
-                info "未取到 br-lan MAC，跳过网关钉扎"
-            fi
-        fi
+        init_nft_family
     fi
 }
+
 
 init_bypass_route() {
     info "初始化旁路由模式"
     
     if [ -n "$bin_nft" ]; then
         nft delete table inet znetcontrol 2>/dev/null || true
-        
-        nft add table inet znetcontrol
-        
-        nft add chain inet znetcontrol forward "{ type filter hook forward priority -100; policy accept; }"
-        
-        nft add chain inet znetcontrol input "{ type filter hook input priority -100; policy accept; }"
+        nft delete table ip znetcontrol 2>/dev/null || true
+        nft delete table ip6 znetcontrol 2>/dev/null || true
+        nft delete table bridge znetcontrol 2>/dev/null || true
+        # 【2.3.25】旁路由与主路由共用同一套表结构
+        # （集合 + 链 + 引用集合的 drop 规则），否则黑名单在旁路由下形同虚设
+        init_nft_family
         
         info "旁路由nftables表已创建"
     fi
@@ -1062,9 +1076,9 @@ main_route_timeadd() {
         else
             log "ERROR: 【$display_name】写入 input 规则失败，MAC $value"
         fi
-        info "✅ 【$display_name】主路由-强力控制：MAC $value（断外网 + 断访问路由器，comment=$_c_fwd/$_c_in）"
+        info "✅ 【$display_name】$(mode_cn "$GATEWAY_MODE")-强力控制：MAC $value（断外网 + 断访问路由器，comment=$_c_fwd/$_c_in）"
     else
-        info "✅ 【$display_name】主路由-普通控制：MAC $value（仅断外网，comment=$_c_fwd）"
+        info "✅ 【$display_name】$(mode_cn "$GATEWAY_MODE")-普通控制：MAC $value（仅断外网，comment=$_c_fwd）"
     fi
     return 0
 }
@@ -1096,53 +1110,6 @@ _mac_has_other_active_rule() {
     return 1
 }
 
-bypass_route_timeadd() {
-    id=$1
-    target=$2
-    chain=$3
-    value=$4
-    display_name=$5
-    
-    info "🎯 【$display_name】旁路由规则添加"
-    device_ip=$(get_device_ip "$value")
-    
-    # 清理显示名称中的特殊字符
-    safe_name=$(echo "$display_name" | sed 's/[^a-zA-Z0-9_-]/_/g' | cut -c1-20)
-    
-    if [ "$chain" = "input" ]; then
-        # 强力控制：同时限制访问路由器和外网
-        
-        # 1. 添加input链规则（限制访问路由器）
-        nft add rule inet znetcontrol input ether saddr "$value" drop comment "$safe_name-input"
-        nft add rule inet znetcontrol input ether saddr "$value" log prefix "ZNET-INPUT: " level info
-        
-        # 2. 添加forward链规则（限制访问外网）
-        nft add rule inet znetcontrol forward ether saddr "$value" drop comment "$safe_name-forward"
-        nft add rule inet znetcontrol forward ether saddr "$value" log prefix "ZNET-FORWARD: " level info
-        
-        # 3. 如果获取到IP地址，也添加IP规则
-        if [ -n "$device_ip" ]; then
-            nft add rule inet znetcontrol input ip saddr "$device_ip" drop
-            nft add rule inet znetcontrol forward ip saddr "$device_ip" drop
-            info "✅ 【$display_name】旁路由-强力控制：MAC+IP（内外网全限制）"
-        else
-            info "✅ 【$display_name】旁路由-强力控制：MAC（内外网全限制）"
-        fi
-    else
-        # 普通控制：只限制访问外网
-        nft add rule inet znetcontrol forward ether saddr "$value" drop comment "$safe_name-forward"
-        nft add rule inet znetcontrol forward ether saddr "$value" log prefix "ZNET-FORWARD: " level info
-        nft add rule inet znetcontrol forward ether saddr "$value" counter
-        
-        if [ -n "$device_ip" ]; then
-            nft add rule inet znetcontrol forward ip saddr "$device_ip" drop
-            nft add rule inet znetcontrol forward ip saddr "$device_ip" log prefix "ZNET-IP: " level info
-            info "✅ 【$display_name】旁路由-普通控制：MAC+IP"
-        else
-            info "✅ 【$display_name】旁路由-普通控制：MAC"
-        fi
-    fi
-}
 
 timeadd() {
     id=$1
@@ -1169,32 +1136,22 @@ timeadd() {
         "mac")
             value=$(echo "$value" | tr A-Z a-z)
             
-            case "$GATEWAY_MODE" in
-                "main")
-                    main_route_timeadd "$id" "$target" "$chain" "$value" "$display_name"
-                    ;;
-                "bypass")
-                    bypass_route_timeadd "$id" "$target" "$chain" "$value" "$display_name"
-                    ;;
-            esac
+            # 【2.3.25】主路由/旁路由统一走同一套下发逻辑
+            # （inet 家族 + 统一 comment=znc-r<id>-fwd/in，状态页与实际下发口径一致）
+            main_route_timeadd "$id" "$target" "$chain" "$value" "$display_name"
             ;;
             
         "ipv4")
-            if [ "$GATEWAY_MODE" = "main" ]; then
-                # 两种模式都先断外网
-                nft_run add element inet znetcontrol ip_forward "{ $value }"
-                if [ "$chain" = "input" ]; then
-                    # 强力控制：额外禁止访问路由器本身
-                    nft_run add element inet znetcontrol ip_input "{ $value }"
-                    info "✅ 【$display_name】主路由-IP强力控制：$value（断外网 + 断访问路由器）"
-                else
-                    info "✅ 【$display_name】主路由-IP普通控制：$value（仅断外网）"
-                fi
+            # 【2.3.25】两种模式统一走 ip_forward / ip_input 集合：
+            # 旁路由旧逻辑写独立 rule，而状态页只查 ip_forward 集合 -> 永远显示“未下发”
+            nft_run add element inet znetcontrol ip_forward "{ $value }"
+            if [ "$chain" = "input" ]; then
+                # 强力控制：额外禁止访问路由器本身
+                nft_run add element inet znetcontrol ip_input "{ $value }"
+                info "✅ 【$display_name】$(mode_cn "$GATEWAY_MODE")-IP强力控制：$value（断外网 + 断访问路由器）"
             else
-                nft add rule inet znetcontrol forward ip saddr "$value" drop comment "$display_name-ip"
-                info "✅ 【$display_name】旁路由-IP控制：$value"
+                info "✅ 【$display_name】$(mode_cn "$GATEWAY_MODE")-IP普通控制：$value（仅断外网）"
             fi
-            ;;
     esac
     
     # 立即断开已有连接，确保管控规则马上生效
@@ -1231,45 +1188,24 @@ timedel() {
             "mac")
                 value=$(echo "$value" | tr A-Z a-z)
                 
-                if [ "$GATEWAY_MODE" = "main" ]; then
-                    # 【2.3.11】只删本段自己的 rule（按 comment），
-                    # 并保底检查：同一 MAC 若还有其它段处于生效期，则不动公共集合
-                    _del_rule_by_comment inet znetcontrol forward "znc-r${id}-fwd"
-                    _del_rule_by_comment inet znetcontrol input "znc-r${id}-in"
-                    # 兼容旧版残留：共享集合里的元素只有确认无其它生效段时才清
-                    if ! _mac_has_other_active_rule "$id" "$value"; then
-                        nft delete element inet znetcontrol mac_forward "{ $value }" 2>/dev/null || true
-                        nft delete element inet znetcontrol mac_input "{ $value }" 2>/dev/null || true
-                        nft delete element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null || true
-                    else
-                        dbg "【$display_name】MAC $value 仍有其它生效段，跳过共享集合清理"
-                    fi
-                    info "✅ 【$display_name】从防火墙移除: MAC $value（comment=znc-r${id}-fwd）"
+                # 【2.3.25】主路由/旁路由统一：只删本段自己的 rule（按 comment）
+                # 旁路由旧逻辑按 MAC 值删（handle 匹配），同一 MAC 配多段时段会互相误伤
+                _del_rule_by_comment inet znetcontrol forward "znc-r${id}-fwd"
+                _del_rule_by_comment inet znetcontrol input "znc-r${id}-in"
+                # 兼容旧版残留：共享集合里的元素只有确认无其它生效段时才清
+                if ! _mac_has_other_active_rule "$id" "$value"; then
+                    nft delete element inet znetcontrol mac_forward "{ $value }" 2>/dev/null || true
+                    nft delete element inet znetcontrol mac_input "{ $value }" 2>/dev/null || true
+                    nft delete element bridge znetcontrol_pin mac_ctl "{ $value }" 2>/dev/null || true
                 else
-                    # 删除MAC地址规则
-                    nft delete rule inet znetcontrol forward handle $(nft -a list chain inet znetcontrol forward 2>/dev/null | grep "ether saddr $value" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                    nft delete rule inet znetcontrol input handle $(nft -a list chain inet znetcontrol input 2>/dev/null | grep "ether saddr $value" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                    
-                    # 删除对应的IP地址规则（如果有）
-    device_ip=$(get_device_ip "$value")
-                    if [ -n "$device_ip" ]; then
-                        nft delete rule inet znetcontrol input handle $(nft -a list chain inet znetcontrol input 2>/dev/null | grep "ip saddr $device_ip" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                        nft delete rule inet znetcontrol forward handle $(nft -a list chain inet znetcontrol forward 2>/dev/null | grep "ip saddr $device_ip" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                        info "✅ 【$display_name】从防火墙移除: MAC $value 和 IP $device_ip"
-                    else
-                        info "✅ 【$display_name】从防火墙移除: $value"
-                    fi
+                    dbg "【$display_name】MAC $value 仍有其它生效段，跳过共享集合清理"
                 fi
+                info "✅ 【$display_name】从防火墙移除: MAC $value（comment=znc-r${id}-fwd）"
                 ;;
             "ipv4")
-                if [ "$GATEWAY_MODE" = "main" ]; then
-                    nft delete element inet znetcontrol ip_forward "{ $value }" 2>/dev/null || true
-                    nft delete element inet znetcontrol ip_input "{ $value }" 2>/dev/null || true
-                else
-                    # 删除IPv4地址规则（input和forward链）
-                    nft delete rule inet znetcontrol forward handle $(nft -a list chain inet znetcontrol forward 2>/dev/null | grep "ip saddr $value" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                    nft delete rule inet znetcontrol input handle $(nft -a list chain inet znetcontrol input 2>/dev/null | grep "ip saddr $value" | awk '{print $NF}' | head -1) 2>/dev/null || true
-                fi
+                # 【2.3.25】两种模式统一：IP 规则走 ip_forward / ip_input 集合
+                nft delete element inet znetcontrol ip_forward "{ $value }" 2>/dev/null || true
+                nft delete element inet znetcontrol ip_input "{ $value }" 2>/dev/null || true
                 info "✅ 【$display_name】从防火墙移除: $value"
                 ;;
         esac
@@ -1354,23 +1290,15 @@ show_status() {
     echo "├────────────────────────────────────────────┤"
     echo "│ nftables状态:                              │"
     
-    if [ "$GATEWAY_MODE" = "bypass" ]; then
-        # 修复规则数统计
-    rule_count=0
-        if nft list table inet znetcontrol 2>/dev/null >/dev/null; then
-            rule_count=$(nft list table inet znetcontrol 2>/dev/null | grep -c "drop comment" || echo 0)
-        fi
-        echo "│   规则数: $rule_count 条                          │"
-    else
+    # 【2.3.25】两种模式统一统计（表结构已统一，不再分支）
     inet_count=0
     mac_count=0
-        if nft list table inet znetcontrol 2>/dev/null >/dev/null; then
-            inet_count=$(nft list table inet znetcontrol 2>/dev/null | grep -c "drop comment" || echo 0)
-        fi
-        mac_count=$(nft list set inet znetcontrol mac_forward 2>/dev/null | grep -oE "[0-9a-f]{2}(:[0-9a-f]{2}){5}" | sort -u | wc -l)
-        echo "│   阻断规则: $inet_count 条                        │"
-        echo "│   受控终端: $mac_count 个                          │"
+    if nft list table inet znetcontrol 2>/dev/null >/dev/null; then
+        inet_count=$(nft list table inet znetcontrol 2>/dev/null | grep -c "drop comment" || echo 0)
     fi
+    mac_count=$(nft list set inet znetcontrol mac_forward 2>/dev/null | grep -oE "[0-9a-f]{2}(:[0-9a-f]{2}){5}" | sort -u | wc -l)
+    echo "│   阻断规则: $inet_count 条                        │"
+    echo "│   受控终端: $mac_count 个                          │"
     
     echo "└────────────────────────────────────────────┘"
     echo ""
@@ -1399,13 +1327,13 @@ stop_timecontrol() {
     if [ -n "$bin_nft" ]; then
     timeout=5
         timeout nft delete table bridge znetcontrol_pin 2>/dev/null || true
-        if [ "$GATEWAY_MODE" = "main" ]; then
-            timeout nft delete table ip znetcontrol 2>/dev/null && info "已清理IPv4表"
-            timeout nft delete table ip6 znetcontrol 2>/dev/null && info "已清理IPv6表"
-            timeout nft delete table bridge znetcontrol 2>/dev/null && info "已清理bridge表"
-        else
-            timeout nft delete table inet znetcontrol 2>/dev/null && info "已清理inet表"
-        fi
+        # 【2.3.25】两种模式统一清理全部 4 张表：
+        # 旧逻辑主路由模式反而不删 inet 表（只删 ip/ip6/bridge），
+        # 而规则实际都在 inet 表里 -> 停服务后规则仍在生效，与"所有规则已清除"不符。
+        timeout nft delete table inet znetcontrol 2>/dev/null && info "已清理inet表"
+        timeout nft delete table ip znetcontrol 2>/dev/null && info "已清理IPv4表"
+        timeout nft delete table ip6 znetcontrol 2>/dev/null && info "已清理IPv6表"
+        timeout nft delete table bridge znetcontrol 2>/dev/null && info "已清理bridge表"
     fi
     
     # 清理文件
