@@ -216,7 +216,7 @@ function M.api_url(path)
 end
 
 function M.rule_status_html()
-	return [[<div class="cbi-section" id="znc-rule-status-section" style="display:block">
+	return [[<div class="cbi-section" id="znc-rule-status-section" style="display:none">
 <h3>规则下发状态 <span id="znc-rs-scope" style="font-size:13px;font-weight:400;opacity:.7"></span></h3>
 <style>
 .znc-rs-table{width:100%;border-collapse:collapse;margin-bottom:8px;}
@@ -338,10 +338,11 @@ function M.rule_status_js(url)
   };
   window.zncRefreshRuleStatus=refresh;
   window.zncRenderRuleStatus=function(rows,scope){ render(rows,scope); };
-  // 【2.3.22】默认显示 + 自动 10s poll：保存并应用后 nft 变化（HUP 立即重载）前端 10s 内自动刷新，
-  // 不再"根本不刷新"（旧版默认隐藏+手动点卡片才 refresh）。
-  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){ zncShowRuleStatus(); setInterval(refresh,5000); }); }
-  else { zncShowRuleStatus(); refresh(); setInterval(refresh,5000); }
+  // 默认隐藏（只有点击 6 个卡片之一才展开对应列表，由 zncShowRuleStatus 负责）。
+  // 仍保持后台预取 + 5s poll：保存并应用后 nft 变化能自动反映到已展开的列表；
+  // section 隐藏时 refresh 只更新 _lastRows 不渲染。
+  if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',function(){ refresh(); setInterval(refresh,5000); }); }
+  else { refresh(); setInterval(refresh,5000); }
 })();
 ]]
 	return (js:gsub("__ZNC_URL__", function() return url end))
