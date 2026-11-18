@@ -314,7 +314,7 @@ function M.rule_status_js(url)
   var _lastRows=null, _curScope='total';
   function refresh(){
     var body=document.getElementById('znc-rs-body');
-    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(function(data){
+    fetch('__ZNC_URL__', { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(function(r){return r.json();}).then(function(data){
       var rows=(data&&data.rules)?data.rules:(Array.isArray(data)?data:[]);
       _lastRows=rows;
       // section 可见时用当前 scope 渲染；不可见时只存数据不渲染
@@ -416,7 +416,7 @@ function M.blacklist_status_js(url)
   }
   var _rows=null,_scope='total';
   function refresh(){
-    fetch('__ZNC_URL__').then(function(r){return r.json();}).then(function(d){
+    fetch('__ZNC_URL__', { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(function(r){return r.json();}).then(function(d){
       _rows=(d&&d.rules)?d.rules:[];
       var sec=document.getElementById('znc-bl-status-section');
       if(sec&&sec.style.display!=='none') render(_rows,_scope);

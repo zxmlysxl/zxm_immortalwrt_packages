@@ -1286,14 +1286,16 @@ function action_blacklist_status()
     local uci = require("luci.model.uci").cursor()
 
     -- 读 nft 黑名单集合元素
+    -- 【2.3.24】iStore 的 nft 不支持 "list set <tbl> <name>"（报 No such file），
+    -- 改为从 ruleset 中截取 set 块，再取块内 elements = { ... }。
+    local ruleset = sys.exec("nft list ruleset 2>/dev/null") or ""
     local function set_elements(name)
-        local o = sys.exec("nft list set inet znetcontrol " .. name .. " 2>/dev/null") or ""
         local s = {}
-        for m in o:gmatch("elements%s*=%s*{([%}]* )") do
-        end
-        for m in o:gmatch("elements%s*=%s*{([^}]*)}") do
-            for e in m:gmatch("[^,%s]+") do s[e:lower():gsub("%-", ":")] = true end
-        end
+        local block = ruleset:match("set%s+" .. name .. "%s*%b{}")
+        if not block then return s end
+        local els = block:match("elements%s*=%s*%b{}")
+        if not els then return s end
+        for e in els:gmatch("[^,%s{}]+") do s[e:lower():gsub("%-", ":")] = true end
         return s
     end
     local bl_mac = set_elements("bl_mac")

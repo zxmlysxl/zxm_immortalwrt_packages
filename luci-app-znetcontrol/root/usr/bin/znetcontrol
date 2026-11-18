@@ -632,11 +632,11 @@ _blacklist_push_nft() {
         [ -n "$_b6" ] && _bl_ip6s="$_bl_ip6s $_b6"
     done < "/var/run/$NAME.blacklist" 2>/dev/null
     # 重建三个黑名单集合再写入元素, 保证与已提交配置一致
-    nft delete set inet znetcontrol bl_mac 2>/dev/null || true
+    nft flush set inet znetcontrol bl_mac 2>/dev/null || true
     nft add set inet znetcontrol bl_mac "{ type ether_addr; flags interval; }" 2>/dev/null || true
-    nft delete set inet znetcontrol bl_ip 2>/dev/null || true
+    nft flush set inet znetcontrol bl_ip 2>/dev/null || true
     nft add set inet znetcontrol bl_ip "{ type ipv4_addr; flags interval; }" 2>/dev/null || true
-    nft delete set inet znetcontrol bl_ip6 2>/dev/null || true
+    nft flush set inet znetcontrol bl_ip6 2>/dev/null || true
     nft add set inet znetcontrol bl_ip6 "{ type ipv6_addr; flags interval; }" 2>/dev/null || true
     [ -n "$_bl_macs" ] && { nft add element inet znetcontrol bl_mac "{ $_bl_macs }" 2>/dev/null || log "WARN: 写入 bl_mac 失败: $_bl_macs"; }
     [ -n "$_bl_ips" ] && { nft add element inet znetcontrol bl_ip "{ $_bl_ips }" 2>/dev/null || log "WARN: 写入 bl_ip 失败: $_bl_ips"; }
@@ -676,6 +676,9 @@ EOF
 sync_blacklist() {
     # 【2.3.17】受 apply 标志门控: 没点「保存并应用」就绝不下发/不动 nft
     [ -f "$BL_APPLY_FLAG" ] || return 0
+    # 【2.3.24】先按已提交配置重建黑名单暂存文件，再下发。
+    # 否则暂存文件是陈旧的（可能为空），启用/停用黑名单后 nft 集合不会变化。
+    _blacklist_validate >/dev/null 2>&1
     _blacklist_push_nft
 }
 
