@@ -1291,11 +1291,15 @@ function action_blacklist_status()
     local ruleset = sys.exec("nft list ruleset 2>/dev/null") or ""
     local function set_elements(name)
         local s = {}
-        local block = ruleset:match("set%s+" .. name .. "%s*%b{}")
-        if not block then return s end
-        local els = block:match("elements%s*=%s*%b{}")
+        -- 定位 "set <name> { ... }" 起始，再从该位置后找第一个 elements 块
+        local _, set_end = ruleset:find("set%s+" .. name .. "%s*{")
+        if not set_end then return s end
+        local seg = ruleset:sub(set_end, set_end + 4096)
+        local els = seg:match("elements%s*=%s*{%s*([^}]*)}")
         if not els then return s end
-        for e in els:gmatch("[^,%s{}]+") do s[e:lower():gsub("%-", ":")] = true end
+        for e in els:gmatch("[^,%s]+") do
+            if e ~= "" then s[e:lower():gsub("%-", ":")] = true end
+        end
         return s
     end
     local bl_mac = set_elements("bl_mac")
