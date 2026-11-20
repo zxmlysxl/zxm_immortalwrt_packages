@@ -1274,9 +1274,9 @@ show_status() {
     target=$(config_t_get device target "$id" 2>/dev/null || echo "未知")
     chain=$(config_t_get device chain "$id" 2>/dev/null || echo "forward")
                 
-                # 简化显示，确保不会超出边界
-                name=$(echo "$name" | cut -c1-10)
-                target=$(echo "$target" | cut -c1-13)
+                # 不做字节截断。cut -c 与 busybox awk 的 length/substr 都按字节计，
+                # 会把中文切成半个字符，输出就成乱码（如 "电视L-每天" -> "电视L-〓"）。
+                # 交给下面 printf 的宽度格式化处理：短名补空格，长名自然溢出但不产生乱码。
                 
                 if [ "$chain" = "input" ]; then
                     printf "│   🔒 %-10s - %-13s      │\n" "$name" "$target"

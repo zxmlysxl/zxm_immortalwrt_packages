@@ -1151,7 +1151,11 @@ function action_rule_status()
     local mac_fwd = set_elements("mac_forward")
 
     local t = os.date("*t")
-    local cur_wd = t.wday == 0 and 7 or t.wday   -- 1=周一 .. 7=周日
+    -- 用 %u 取 ISO 星期（1=周一..7=周日）。不要用 os.date("*t").wday：
+    -- 部分固件构建（实测 ImmortalWrt + Lua 5.1.5）返回 0=周日..6=周六，
+    -- 与标准 Lua 的 1=周日..7=周六 不同，直接取 wday 会让星期判定整体错位一天，
+    -- 表现为状态页把"当时生效"的规则误判为星期不匹配而隐藏。
+    local cur_wd = tonumber(os.date("%u")) or 1
     local cur_min = (t.hour or 0) * 60 + (t.min or 0)
 
     local result = {}
