@@ -47,6 +47,9 @@ if (document.readyState === 'loading') {
             <button class="cbi-button cbi-button-action" onclick="refreshDevices()">
                 <i class="icon icon-refresh"></i> <%:刷新列表%>
             </button>
+            <button class="cbi-button" id="znc-toggle-offline" onclick="toggleOfflineDevices()">
+                <i class="icon icon-devices"></i> <%:显示离线设备%>
+            </button>
             <button class="cbi-button cbi-button-apply" onclick="window.location.href='<%=luci.dispatcher.build_url("admin/control/znetcontrol/rules")%>'">
                 <i class="icon icon-settings"></i> <%:管理规则%>
             </button>
@@ -59,6 +62,22 @@ if (document.readyState === 'loading') {
 
 <script>
 // 转义函数
+// 仅显示在线设备（默认）；开启后连同离线/静态未开机设备一起列出
+var zncShowOffline = false;
+var zncOfflineCount = 0;
+
+function toggleOfflineDevices() {
+    zncShowOffline = !zncShowOffline;
+    var btn = document.getElementById('znc-toggle-offline');
+    if (btn) {
+        btn.innerHTML = (zncShowOffline ? '<i class="icon icon-cancel"></i> <%:隐藏离线设备%>' : '<i class="icon icon-devices"></i> <%:显示离线设备%>');
+        if (zncOfflineCount > 0) {
+            btn.innerHTML += ' (' + zncOfflineCount + ')';
+        }
+    }
+    refreshDevices();
+}
+
 function escapeForJs(str) {
     if (!str) return '';
     return String(str)
@@ -95,7 +114,27 @@ function refreshDevices() {
                        '</div>' +
                        '</div>';
             } else {
-                devices.forEach(device => {
+                zncOfflineCount = devices.filter(d => !(d.online === undefined ? true : !!d.online)).length;
+                var shown = devices.filter(d => zncShowOffline || (d.online === undefined ? true : !!d.online));
+                var btn0 = document.getElementById('znc-toggle-offline');
+                if (btn0) {
+                    btn0.innerHTML = (zncShowOffline ? '<i class="icon icon-cancel"></i> <%:隐藏离线设备%>' : '<i class="icon icon-devices"></i> <%:显示离线设备%>');
+                    if (zncOfflineCount > 0) btn0.innerHTML += ' (' + zncOfflineCount + ')';
+                }
+                if (shown.length === 0) {
+                    deviceList.innerHTML = '<div class="tr">' +
+                        '<div class="td" colspan="5" style="text-align: center; padding: 40px;">' +
+                        '<div class="empty-state">' +
+                        '<i class="icon icon-devices" style="font-size: 48px; margin-bottom: 10px;"></i>' +
+                        '<p style="margin: 0 0 10px 0;"><%:当前没有在线设备%></p>' +
+                        '<p style="font-size: 12px;">共记录 ' + devices.length + ' 台设备，其中 ' + zncOfflineCount + ' 台离线</p>' +
+                        '</div>' +
+                        '</div>' +
+                        '</div>';
+                    znetcontrolApplyTheme();
+                    return;
+                }
+                shown.forEach(device => {
                     // 兼容老字段缺失：新字段（online/ipv6/sources）一律做兜底
                     const isConfigured = !!device.is_configured;
                     const mac = device.mac || '';

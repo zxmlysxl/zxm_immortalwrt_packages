@@ -919,14 +919,25 @@ function action_get_devices()
     -- ---- 来源 4：/etc/config/dhcp 静态租约（离线也列出） ----
     pcall(function()
         uci:foreach("dhcp", "host", function(s)
-            local mac = znc_norm_mac(s.mac)
-            if mac ~= "" then
-                local ip = ""
-                if znc_is_ipv4(s.ip or "") then ip = s.ip end
-                local e = ensure_entry(mac, ip, "static")
-                if ip ~= "" then e.ipv4[ip] = true end
-                if e.hostname == "" and s.name and s.name ~= "" then
-                    e.hostname = s.name
+            local ip = ""
+            if znc_is_ipv4(s.ip or "") then ip = s.ip end
+            local name = ""
+            if s.name and s.name ~= "" then name = s.name end
+            local macs = {}
+            local mv = s.mac
+            if type(mv) == "table" then
+                for _, x in ipairs(mv) do macs[#macs+1] = x end
+            elseif mv ~= nil and mv ~= "" then
+                macs[1] = mv
+            end
+            for _, raw in ipairs(macs) do
+                local mac = znc_norm_mac(raw)
+                if mac ~= "" then
+                    local e = ensure_entry(mac, ip, "static")
+                    if ip ~= "" then e.ipv4[ip] = true end
+                    if e.hostname == "" and name ~= "" then
+                        e.hostname = name
+                    end
                 end
             end
         end)
