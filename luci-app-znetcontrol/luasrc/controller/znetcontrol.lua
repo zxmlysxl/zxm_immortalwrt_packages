@@ -830,6 +830,9 @@ function action_get_devices()
             ip = ip or "",
             hostname = "",
             online = false,
+            arpreach = false,      -- /proc/net/arp flags 0x2（内核确认有应答）
+            neigh6state = "",      -- IPv6 邻居状态
+            lease_expiry = 0,      -- DHCP 租约到期时间（用于估算最后活动时间）
             ipv4 = {},
             ipv6 = {},
             sources = {}
@@ -852,7 +855,6 @@ function action_get_devices()
                 mac = znc_norm_mac(mac)
                 if mac ~= "" then
                     local e = ensure_entry(mac, ip, "neigh4")
-                    e.online = true
                     e.ipv4[ip] = true
                 end
             end
@@ -883,7 +885,14 @@ function action_get_devices()
             end
             if addr ~= "" then
                 local e = ensure_entry(mac, "", "neigh6")
-                e.online = true
+                local st = ""
+                for i = 1, #tokens do
+                    if tokens[i]:match("^(REACHABLE|STALE|DELAY|PROBE|FAILED|INCOMPLETE|NOARP|PERMANENT)$") then
+                        st = tokens[i]
+                        break
+                    end
+                end
+                if st ~= "" and e.neigh6state == "" then e.neigh6state = st end
                 e.ipv6[addr] = true
             end
         end
@@ -906,8 +915,8 @@ function action_get_devices()
                             e.hostname = host
                         end
                         local exp = tonumber(expiry)
-                        if exp and exp > now then
-                            e.online = true
+                        if exp and exp > e.lease_expiry then
+                            e.lease_expiry = exp
                         end
                     end
                 end
@@ -953,7 +962,7 @@ function action_get_devices()
                 if mac ~= "" and mac ~= "00:00:00:00:00:00" then
                     local e = ensure_entry(mac, ip, "arp")
                     e.ipv4[ip] = true
-                    if flags == "0x2" then e.online = true end
+                    if flags == "0x2" then e.arpreach = true end
                 end
             end
         end
@@ -970,6 +979,19 @@ function action_get_devices()
         elseif znc_is_ipv6(ip) then
             local e = ensure_entry("", "", "rule")
             e.ipv6[ip] = true
+        end
+    end
+
+    -- ---- 来源 7：conntrack 活动连接（补充 ARP 漏掉的空闲设备） ----
+    -- 口径与"概览页-设备明细"一致: 在线 = ARP 有应答 或 该 IP 在 conntrack 有活动连接。
+    -- DHCP 租约不再作为在线证据(租约长达 12h, 设备关机后租约仍有效, 会把僵尸设备算成在线)。
+    local conn_ips = {}
+    do
+        local cnt = tonumber((sys.exec("cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null") or ""):match("%d+") or "0")
+        if cnt and cnt > 0 and cnt <= 8000 then
+            local ct = sys.exec("cat /proc/net/nf_conntrack 2>/dev/null") or ""
+            for ip in ct:gmatch("src=(%d+%.%d+%.%d+%.%d+)") do conn_ips[ip] = true end
+            for ip in ct:gmatch("dst=(%d+%.%d+%.%d+%.%d+)") do conn_ips[ip] = true end
         end
     end
 
@@ -1042,11 +1064,33 @@ function action_get_devices()
         table.sort(ipv6)
         table.sort(srcs)
 
+        -- 最终在线判定(与概览页口径一致):
+        --   ARP 有应答(/proc/net/arp flags 0x2) 或 该 IP 在 conntrack 有活动连接
+        --   IPv6-only 设备: 邻居状态属于 REACHABLE/DELAY/PROBE 也算在线(STALE/FAILED 不算)
+        local is_online = false
+        if e.arpreach then is_online = true end
+        if not is_online and e.ip ~= "" and conn_ips[e.ip] then is_online = true end
+        if not is_online and e.neigh6state ~= "" then
+            if e.neigh6state == "REACHABLE" or e.neigh6state == "DELAY" or e.neigh6state == "PROBE" then
+                is_online = true
+            end
+        end
+
+        -- 最后活动时间估算: DHCP 租约到期时间倒推一个租期(= 最后一次续租时刻)
+        local last_online = 0
+        if e.lease_expiry > 0 then
+            local dur = tonumber((sys.exec("uci -q get dhcp.lan.leasetime 2>/dev/null") or ""):match("^%d+$"))
+            if not dur or dur <= 0 then dur = 43200 end
+            last_online = e.lease_expiry - dur
+            if last_online < 0 then last_online = 0 end
+        end
+
         table.insert(result, {
             ip = e.ip,
             mac = e.mac,
             hostname = (e.hostname ~= "" and e.hostname) or "未知设备",
-            online = e.online and true or false,
+            online = is_online,
+            last_online = last_online,
             is_configured = (mac_in_rules or ip_in_rules or v6_in_rules) and true or false,
             is_blacklisted = is_blacklisted and true or false,
             blacklist_label = bl_label,
@@ -1058,6 +1102,25 @@ function action_get_devices()
             sources = srcs
         })
     end
+
+    -- 排序: IPv4 按数值升序(不是字符串), 无 IPv4 / IPv6-only 的排最后, 再按 MAC 兜底
+    local function ip_sort_key(ip)
+        if not ip or ip == "" then return nil end
+        local a, b, c, d = ip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+        if not a then return nil end
+        a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+        return a * 16777216 + b * 65536 + c * 256 + d
+    end
+    table.sort(result, function(x, y)
+        local kx, ky = ip_sort_key(x.ip), ip_sort_key(y.ip)
+        if kx == nil and ky == nil then
+            return (x.mac or "") < (y.mac or "")
+        end
+        if kx == nil then return false end
+        if ky == nil then return true end
+        if kx ~= ky then return kx < ky end
+        return (x.mac or "") < (y.mac or "")
+    end)
 
     http.prepare_content("application/json")
     http.header("Cache-Control", "no-cache, no-store, must-revalidate")

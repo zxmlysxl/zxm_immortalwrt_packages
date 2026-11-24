@@ -62,6 +62,21 @@ if (document.readyState === 'loading') {
 
 <script>
 // 转义函数
+// 最后上线时间格式化（后端给的是 Unix 秒）
+function formatLastSeen(ts) {
+    if (!ts) return '';
+    var d = new Date(ts * 1000);
+    if (isNaN(d.getTime()) || d.getTime() <= 0) return '';
+    var now = Date.now();
+    var diff = Math.floor((now - d.getTime()) / 1000);
+    if (diff < 0) diff = 0;
+    if (diff < 60) return diff + ' 秒前';
+    if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + ' 天前';
+    return d.toLocaleDateString();
+}
+
 // 仅显示在线设备（默认）；开启后连同离线/静态未开机设备一起列出
 var zncShowOffline = false;
 var zncOfflineCount = 0;
@@ -147,6 +162,7 @@ function refreshDevices() {
                     const sources = Array.isArray(device.sources) ? device.sources : [];
                     const isBlacklisted = !!device.is_blacklisted;
                     const blLabel = device.blacklist_label || '';
+                    const lastSeen = formatLastSeen(device.last_online);
 
                     const safeTarget = escapeForJs(targetValue);
                     const safeHostname = escapeForJs(hostname);
@@ -180,11 +196,12 @@ function refreshDevices() {
                            '</div>' +
                            '</div>';
 
-                    // 主机名列
+                    // 主机名列（离线设备附带最后上线时间）
                     html += '<div class="td hostname-cell">' +
                            '<div class="device-hostname">' +
                            (hostname ? escapeForJs(hostname) : '<span>未知设备</span>') +
                            '</div>' +
+                           (!online && lastSeen ? '<div class="device-lastseen">最后上线 ' + escapeForJs(lastSeen) + '</div>' : '') +
                            '</div>';
 
                     // 状态列：管控规则 与 黑名单 两个按钮水平同行
@@ -569,6 +586,12 @@ style.textContent = `
         overflow: hidden;
         text-overflow: ellipsis;
         padding-right: 10px;
+    }
+    .device-lastseen {
+        color: var(--znc-secondary-text);
+        font-size: 11px;
+        margin-top: 2px;
+        white-space: nowrap;
     }
     
     /* 表格结构 */
