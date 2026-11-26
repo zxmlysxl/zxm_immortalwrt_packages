@@ -258,6 +258,15 @@ jobs:
             echo "::warning::未找到 scripts/repair_package_versions.py, 跳过"
           fi
 
+      - name: Apply local patches (OpenClash unicode filename)
+        run: |
+          echo "=== 应用本地补丁 ==="
+          if [ -f scripts/patch_openclash_unicode_filename.py ]; then
+            python3 scripts/patch_openclash_unicode_filename.py . || echo "::warning::OpenClash 补丁脚本执行异常, 继续"
+          else
+            echo "::warning::未找到 scripts/patch_openclash_unicode_filename.py, 跳过"
+          fi
+
       - name: Commit and Push Changes
         run: |
           cd "$GITHUB_WORKSPACE" || exit 1

@@ -2462,11 +2462,65 @@ function ltn12_popen(command)
 	end
 end
 
+-- openclaw-unicode-filename-patch
+-- 允许 UTF-8(中文等)文件名, 但仍拒绝路径分隔符 / 路径穿越 / 控制字符。
+-- 上游原实现用 ^[%w%._%-]+$, %w 只含 ASCII, 会把中文名判为非法;
+-- 而同页面的 rename_file / create_file 又没有校验, 行为不一致。
+local function is_safe_filename(filename)
+	if not filename or filename == "" then
+		return false
+	end
+	if filename:match("^%.") or filename:find("..", 1, true) then
+		return false
+	end
+	local allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._- "
+	for i = 1, #filename do
+		local b = filename:byte(i)
+		if b < 0x20 or b == 0x7f then
+			return false
+		end
+		if b == 0x2f or b == 0x5c then
+			return false
+		end
+		if b < 0x80 and not allowed:find(string.char(b), 1, true) then
+			return false
+		end
+	end
+	return true
+end
+
+-- 只允许操作 OpenClash 自己的目录, 防止客户端参数造成路径穿越。
+local function is_allowed_openclash_dir(dirpath)
+	if not dirpath or dirpath == "" then
+		return false
+	end
+	local allowed_dirs = {
+		"/etc/openclash/config/",
+		"/etc/openclash/proxy_provider/",
+		"/etc/openclash/rule_provider/",
+	}
+	for _, d in ipairs(allowed_dirs) do
+		if dirpath == d then
+			return true
+		end
+	end
+	return false
+end
+
 function create_file()
 	local file_name = HTTP.formvalue("filename")
-	local file_path = HTTP.formvalue("filepath")..file_name
-	fs.writefile(file_path, "")
-	if not fs.isfile(file_path) then
+	local file_path = HTTP.formvalue("filepath")
+	if not file_name or not is_safe_filename(file_name) then
+		HTTP.status(500, "Create File Failed")
+		return
+	end
+	if not is_allowed_openclash_dir(file_path) then
+		HTTP.status(500, "Create File Failed")
+		return
+	end
+	local full_path = file_path .. file_name
+	fs.writefile(full_path, "")
+	if not fs.isfile(full_path) then
 		HTTP.status(500, "Create File Failed")
 	end
 	return
@@ -2476,6 +2530,18 @@ function rename_file()
 	local new_file_name = HTTP.formvalue("new_file_name")
 	local file_path = HTTP.formvalue("file_path")
 	local old_file_name = HTTP.formvalue("file_name")
+	if not new_file_name or not is_safe_filename(new_file_name) then
+		HTTP.status(500, "Rename File Failed")
+		return
+	end
+	if not old_file_name or not is_safe_filename(old_file_name) then
+		HTTP.status(500, "Rename File Failed")
+		return
+	end
+	if not is_allowed_openclash_dir(file_path) then
+		HTTP.status(500, "Rename File Failed")
+		return
+	end
 	local old_file_path = file_path .. old_file_name
 	local new_file_path = file_path .. new_file_name
 	local old_run_file_path = "/etc/openclash/" .. old_file_name
@@ -4723,9 +4789,6 @@ function FindProxyForURLEx(url, host) {
 	return pac_script
 end
 
-local function is_safe_filename(filename)
-	return filename and filename:match("^[%w%._%-]+$") and not filename:match("^%.")
-end
 
 local function kill_process()
 	local cmd = string.format("%s |grep -E 'openclash|clash|mihomo' |grep -v grep |awk '{print $1}' |xargs -r kill -9 >/dev/null 2>&1", fs.ps_cmd())
