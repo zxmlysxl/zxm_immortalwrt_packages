@@ -27,6 +27,9 @@ Lua 的 %w 只覆盖 ASCII 字母数字, 所以 "我的订阅.yaml" 这类中文
 2. 让 create_file() 与 rename_file() 也走同一套校验, 三条路径行为一致;
    同时限定只能操作 OpenClash 自己的几个目录, 顺带堵掉客户端可控
    file_path / filepath 造成的路径穿越。
+3. 维护 Makefile 里的 PKG_RELEASE 标记。Makefile 同样位于被 rsync
+   --delete 覆盖的目录内, 不由本脚本维护的话, upstream 同步一次就把
+   版本号冲回去了, 包管理器也看不出打过补丁。
 
 幂等
 ----
@@ -46,6 +49,16 @@ import sys
 MARKER = "-- openclaw-unicode-filename-patch"
 
 TARGET = os.path.join("luci-app-openclash", "luasrc", "controller", "openclash.lua")
+
+# Makefile 同样位于被 rsync --delete 覆盖的目录内, 版本标记也必须由本脚本
+# 维护, 否则 upstream 同步一次就把版本号冲回去了。
+MAKEFILE = os.path.join("luci-app-openclash", "Makefile")
+
+# 本地补丁的 PKG_RELEASE。上游 OpenClash 的 Makefile 不定义 PKG_RELEASE,
+# 默认是 1; 抬到 2 之后包管理器才能识别出这是打过补丁的版本。
+PKG_RELEASE = "2"
+
+MAKEFILE_MARKER = "# openclash-unicode-filename-patch: local patch, unicode config filenames"
 
 # 上游原始 is_safe_filename 定义, 整块删除, 换成提前插入的新实现
 ORIGINAL_SAFE_FN_RE = re.compile(
@@ -200,36 +213,79 @@ def patch_text(text):
     return text, notes
 
 
+def patch_makefile(text):
+    """在 Makefile 里维护 PKG_RELEASE 标记, 返回 (新文本, 说明列表)。"""
+    notes = []
+
+    if MAKEFILE_MARKER in text and ("PKG_RELEASE:=" + PKG_RELEASE) in text:
+        return text, ["Makefile 版本标记已是最新"]
+
+    # 去掉上游可能存在的 PKG_RELEASE 定义, 统一由本脚本设置
+    text, n = re.subn(r"^PKG_RELEASE\s*:?=.*$", "", text, count=1, flags=re.M)
+    if n:
+        notes.append("移除上游 PKG_RELEASE 定义")
+
+    lines = ("\n" + MAKEFILE_MARKER + "\nPKG_RELEASE:=" + PKG_RELEASE + "\n")
+
+    m = re.search(r"^PKG_VERSION\s*:?=.*$", text, re.M)
+    if not m:
+        return text, notes + ["Makefile 中未找到 PKG_VERSION, 不改版本标记"]
+    text = text[:m.end()] + lines + text[m.end():]
+    notes.append("设置 PKG_RELEASE:=" + PKG_RELEASE)
+    return text, notes
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     check_only = "--check" in sys.argv
     repo_root = args[0] if args else "."
 
+    changed = False
+
+    # --- Lua 控制器 ---
     path = os.path.join(repo_root, TARGET)
     if not os.path.isfile(path):
         print("::warning::找不到 %s, 跳过" % path)
-        return 0
+    else:
+        with open(path, "r", encoding="utf-8") as fh:
+            original = fh.read()
 
-    with open(path, "r", encoding="utf-8") as fh:
-        original = fh.read()
+        patched, notes = patch_text(original)
+        for note in notes:
+            print("  - %s" % note)
 
-    patched, notes = patch_text(original)
+        if patched != original:
+            changed = True
+            if check_only:
+                print("OpenClash 补丁: 需要应用(未写入) %s" % path)
+            else:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(patched)
+                print("OpenClash 补丁: 已写入 %s" % path)
 
-    for note in notes:
-        print("  - %s" % note)
+    # --- Makefile 版本标记 ---
+    mk_path = os.path.join(repo_root, MAKEFILE)
+    if not os.path.isfile(mk_path):
+        print("::warning::找不到 %s, 跳过" % mk_path)
+    else:
+        with open(mk_path, "r", encoding="utf-8") as fh:
+            original = fh.read()
 
-    if patched == original:
+        patched, notes = patch_makefile(original)
+        for note in notes:
+            print("  - %s" % note)
+
+        if patched != original:
+            changed = True
+            if check_only:
+                print("OpenClash 补丁: 需要应用(未写入) %s" % mk_path)
+            else:
+                with open(mk_path, "w", encoding="utf-8") as fh:
+                    fh.write(patched)
+                print("OpenClash 补丁: 已写入 %s" % mk_path)
+
+    if not changed:
         print("OpenClash 补丁: 无需变更")
-        return 0
-
-    if check_only:
-        print("OpenClash 补丁: 需要应用(未写入)")
-        return 1
-
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(patched)
-
-    print("OpenClash 补丁: 已写入 %s" % path)
     return 0
 
 
